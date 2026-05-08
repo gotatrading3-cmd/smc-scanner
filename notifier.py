@@ -69,26 +69,48 @@ class TelegramNotifier:
             print(f"  [Telegram] erreur : {e}")
             return False
 
+    @staticmethod
+    def _fmt_price(p: float) -> str:
+        """Formatage adaptatif : 2 dec pour les gros prix, plus precis pour les petits."""
+        if p >= 1000:
+            return f"{p:>12,.2f}"
+        elif p >= 100:
+            return f"{p:>12,.2f}"
+        elif p >= 10:
+            return f"{p:>12,.3f}"
+        elif p >= 1:
+            return f"{p:>12,.4f}"
+        elif p >= 0.01:
+            return f"{p:>12,.5f}"
+        else:
+            return f"{p:>12,.8f}"
+
     def send_setup(self, alert) -> bool:
         """alert: SetupAlert du scanner."""
         ts = alert.timestamp.strftime("%Y-%m-%d %H:%M UTC")
         sl_pct = (alert.sl - alert.entry) / alert.entry * 100
         tp_pct = (alert.tp - alert.entry) / alert.entry * 100
+        risk_pct = abs(sl_pct)
+        reward_pct = abs(tp_pct)
 
         emoji = "🟢" if alert.direction == "LONG" else "🔴"
         arrow = "📈" if alert.direction == "LONG" else "📉"
 
+        f = self._fmt_price
         text = (
-            f"{emoji} *{alert.direction} setup* {arrow}\n"
-            f"💎 `{alert.symbol}`\n"
+            f"{emoji} *{alert.direction} SETUP* {arrow}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"💎 *{alert.symbol}*\n"
             f"\n"
-            f"💰 Entry : `{alert.entry:,.4f}`\n"
-            f"🛑 SL    : `{alert.sl:,.4f}`  ({sl_pct:+.2f}%)\n"
-            f"🎯 TP    : `{alert.tp:,.4f}`  ({tp_pct:+.2f}%)\n"
-            f"⚖️  R:R  : `1:{alert.rr:.2f}`\n"
+            f"💰 Entry  `{f(alert.entry)}`\n"
+            f"🛑 Stop   `{f(alert.sl)}`  `{sl_pct:+6.2f}%`\n"
+            f"🎯 Target `{f(alert.tp)}`  `{tp_pct:+6.2f}%`\n"
+            f"⚖️ R:R     `1 : {alert.rr:.2f}`\n"
+            f"\n"
+            f"📊 Risque {risk_pct:.2f}%   Gain potentiel {reward_pct:.2f}%\n"
             f"\n"
             f"📝 _{alert.reason}_\n"
-            f"📊 RSI : `{alert.rsi:.1f}`   📏 EMA200 dist : `{alert.distance_to_ema200_pct:+.2f}%`\n"
+            f"📈 RSI `{alert.rsi:.1f}`   📏 vs EMA200 `{alert.distance_to_ema200_pct:+.2f}%`\n"
             f"\n"
             f"⏰ `{ts}`"
         )
