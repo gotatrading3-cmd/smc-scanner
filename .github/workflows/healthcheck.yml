@@ -1,0 +1,50 @@
+name: Health Check
+
+on:
+  schedule:
+    # Toutes les 2h
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verifie que le scanner principal a tourne dans les 60 dernieres minutes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -e
+          # Recupere les derniers runs du workflow scanner
+          LAST_RUN=$(gh api repos/${{ github.repository }}/actions/workflows/scan.yml/runs?per_page=5 \
+              --jq '[.workflow_runs[] | select(.conclusion=="success")] | first | .updated_at')
+
+          if [ -z "$LAST_RUN" ]; then
+              echo "Aucun run reussi trouve pour scan.yml"
+              exit 1
+          fi
+
+          # Calcule l'age en minutes
+          NOW=$(date -u +%s)
+          LAST=$(date -u -d "$LAST_RUN" +%s)
+          AGE_MIN=$(( (NOW - LAST) / 60 ))
+          echo "Dernier run reussi : $LAST_RUN"
+          echo "Age : $AGE_MIN minutes"
+
+          if [ $AGE_MIN -gt 60 ]; then
+              echo "ALERTE : scanner KO depuis plus de 60 minutes ($AGE_MIN min)"
+              MSG="🚨 *HEALTH CHECK ALERTE*%0AScanner SMC inactif depuis ${AGE_MIN} minutes.%0AVerifier l'onglet Actions du repo."
+              curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+                  -d "chat_id=${TELEGRAM_CHAT_ID}" \
+                  -d "text=$MSG" \
+                  -d "parse_mode=Markdown" || true
+              exit 1
+          fi
+          echo "OK : scanner sain ($AGE_MIN min depuis dernier run reussi)"

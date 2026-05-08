@@ -57,6 +57,13 @@ MT5_TIMEFRAME_MAP = {
 
 CONFIG_FILE = Path(__file__).parent / "mt5_config.json"
 TRADE_LOG = Path(__file__).parent / "mt5_trades.log"
+EQUITY_LOG = Path(__file__).parent / "mt5_equity.log"
+PAUSE_FILE = Path(__file__).parent / ".pause"
+
+# Filtres temporels (UTC)
+SKIP_WEEKEND_FOR_NON_CRYPTO = True   # vendredi 20h UTC -> lundi 00h UTC
+DRAWDOWN_24H_MAX_PCT = 3.0           # circuit breaker si -3% en 24h
+TRAILING_TO_BE_AT_R = 1.0            # SL remonte a breakeven quand prix atteint +1R
 
 # ===== SAFETY HARDCODE - NE PAS DESACTIVER SANS COMPRENDRE =====
 DEMO_ONLY = True
@@ -64,16 +71,28 @@ MAX_LOT = 0.01
 SYMBOL_WHITELIST = {
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
-    # Indices US
-    "US100", "US30",
+    # Indices
+    "US100", "US30", "GER40", "UK100",
     # Metaux precieux
     "XAUUSD", "XAGUSD",
+    # Forex majeurs
+    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
+    # Commodities (si dispos)
+    "USOIL", "NATGAS",
 }
 COOLDOWN_HOURS = 4
 SCAN_INTERVAL_MIN = 15
 DEFAULT_SYMBOLS = [
+    # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
-    "US100", "US30", "XAUUSD", "XAGUSD",
+    # Indices
+    "US100", "US30", "GER40", "UK100",
+    # Metaux
+    "XAUUSD", "XAGUSD",
+    # Forex
+    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD",
+    # Commodities
+    "USOIL", "NATGAS",
 ]
 SCAN_TIMEFRAME = "4h"
 SCAN_LIMIT = 500
@@ -295,6 +314,150 @@ def read_last_trade_time(symbol: str) -> Optional[datetime]:
 
 
 # ============================================================
+#               FILTRE TEMPOREL / WEEKEND
+# ============================================================
+
+CRYPTO_KEYWORDS = ("BTC", "ETH", "SOL", "AVAX", "LINK", "USDT")
+
+
+def is_crypto(symbol: str) -> bool:
+    return any(k in symbol.upper() for k in CRYPTO_KEYWORDS)
+
+
+def is_market_open(symbol: str) -> bool:
+    """Crypto = 24/7. Indices/forex/metaux : skip weekend (vendredi 21h UTC -> lundi)."""
+    if is_crypto(symbol):
+        return True
+    if not SKIP_WEEKEND_FOR_NON_CRYPTO:
+        return True
+    now = datetime.utcnow()
+    wd = now.weekday()  # 0=lundi, 6=dimanche
+    h = now.hour
+    if wd == 5:  # samedi
+        return False
+    if wd == 6:  # dimanche
+        return False
+    if wd == 4 and h >= 21:  # vendredi >= 21h UTC
+        return False
+    if wd == 0 and h < 1:  # lundi < 01h UTC (ouvre vers 22h dimanche pour FX, mais conservateur)
+        return False
+    return True
+
+
+# ============================================================
+#               CIRCUIT BREAKER (drawdown 24h)
+# ============================================================
+
+def log_equity(balance: float, equity: float) -> None:
+    """Append equity courant pour suivi drawdown."""
+    try:
+        with EQUITY_LOG.open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now().isoformat()}\t{balance:.2f}\t{equity:.2f}\n")
+    except Exception:
+        pass
+
+
+def check_drawdown_24h() -> tuple[bool, float]:
+    """
+    Lit l'equity log, calcule le DD% sur 24h.
+    Retourne (ok, dd_pct). ok=False si DD > DRAWDOWN_24H_MAX_PCT.
+    """
+    if not EQUITY_LOG.exists():
+        return True, 0.0
+    try:
+        cutoff = datetime.now() - timedelta(hours=24)
+        peak = None
+        last = None
+        for line in EQUITY_LOG.read_text(encoding="utf-8").splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            ts = datetime.fromisoformat(parts[0])
+            if ts < cutoff:
+                continue
+            eq = float(parts[2])
+            peak = eq if peak is None else max(peak, eq)
+            last = eq
+        if peak is None or last is None:
+            return True, 0.0
+        dd = (last - peak) / peak * 100
+        return dd >= -DRAWDOWN_24H_MAX_PCT, dd
+    except Exception:
+        return True, 0.0
+
+
+def is_paused() -> bool:
+    return PAUSE_FILE.exists()
+
+
+def pause_trading(reason: str) -> None:
+    PAUSE_FILE.write_text(f"{datetime.now().isoformat()}\n{reason}\n")
+    log(f"[PAUSE] Trading suspendu : {reason}")
+
+
+# ============================================================
+#               TRAILING STOP - BREAKEVEN
+# ============================================================
+
+def manage_open_positions() -> None:
+    """
+    Pour chaque position ouverte, si le prix a atteint +1R (= autant que le risque),
+    remonte le SL au prix d'entree (breakeven). Aucune position ne peut plus perdre
+    apres cela.
+    """
+    positions = mt5.positions_get()
+    if not positions:
+        return
+
+    for pos in positions:
+        if pos.sl == 0:
+            continue
+        info = mt5.symbol_info(pos.symbol)
+        if info is None:
+            continue
+        tick = mt5.symbol_info_tick(pos.symbol)
+        if tick is None:
+            continue
+        digits = info.digits
+
+        if pos.type == 0:  # BUY / LONG
+            risk = pos.price_open - pos.sl
+            if risk <= 0:
+                continue
+            target_be = pos.price_open + TRAILING_TO_BE_AT_R * risk
+            current = tick.bid
+            if current >= target_be and pos.sl < pos.price_open:
+                # remonte SL au prix d'entree
+                req = {
+                    "action": mt5.TRADE_ACTION_SLTP,
+                    "position": pos.ticket,
+                    "sl": round(pos.price_open, digits),
+                    "tp": pos.tp,
+                    "symbol": pos.symbol,
+                }
+                r = mt5.order_send(req)
+                if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+                    log(f"[TRAILING] {pos.symbol} #{pos.ticket} SL -> BE ({pos.price_open})")
+        else:  # SELL / SHORT
+            risk = pos.sl - pos.price_open
+            if risk <= 0:
+                continue
+            target_be = pos.price_open - TRAILING_TO_BE_AT_R * risk
+            current = tick.ask
+            if current <= target_be and pos.sl > pos.price_open:
+                req = {
+                    "action": mt5.TRADE_ACTION_SLTP,
+                    "position": pos.ticket,
+                    "sl": round(pos.price_open, digits),
+                    "tp": pos.tp,
+                    "symbol": pos.symbol,
+                }
+                r = mt5.order_send(req)
+                if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+                    log(f"[TRAILING] {pos.symbol} #{pos.ticket} SL -> BE ({pos.price_open})")
+
+
+# ============================================================
 #                FETCH OHLCV (MT5 desktop)
 # ============================================================
 
@@ -420,11 +583,42 @@ def scan_and_execute(cfg: dict, notifier: Optional[TelegramNotifier],
     if not safety_pre_check(cfg):
         return
 
+    # 1) Pause manuelle ?
+    if is_paused():
+        log("[PAUSE] Trading suspendu (fichier .pause present). Skip.")
+        return
+
+    # 2) Equity tracking + circuit breaker drawdown
+    info = mt5.account_info()
+    if info is not None:
+        log_equity(info.balance, info.equity)
+        ok_dd, dd = check_drawdown_24h()
+        if not ok_dd:
+            pause_trading(f"Drawdown 24h {dd:.2f}% > -{DRAWDOWN_24H_MAX_PCT}%")
+            if notifier and notifier.enabled:
+                notifier.send(
+                    f"🚨 *CIRCUIT BREAKER active*\n"
+                    f"Drawdown 24h : `{dd:.2f}%`\n"
+                    f"Trading auto-suspendu.\n"
+                    f"Pour reprendre : supprime `.pause` puis relance le bot."
+                )
+            return
+
+    # 3) Trailing stop -> breakeven sur positions ouvertes
+    try:
+        manage_open_positions()
+    except Exception as e:
+        log(f"[TRAILING] erreur : {e}")
+
     log(f"=== Scan {datetime.now().strftime('%H:%M:%S')} (dry_run={dry_run}) ===")
     symbol_map = cfg.get("symbol_map", {})
     for symbol in DEFAULT_SYMBOLS:
         if symbol not in symbol_map:
-            continue  # symbole non configure par l'utilisateur, skip
+            continue
+        # 4) Filtre weekend pour non-crypto
+        if not is_market_open(symbol):
+            continue
+
         mt5_symbol = symbol_map[symbol]
         try:
             df = fetch_mt5_ohlcv(mt5_symbol, SCAN_TIMEFRAME, SCAN_LIMIT)
