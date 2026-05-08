@@ -44,8 +44,15 @@ for _candidate in [
 
 import MetaTrader5 as mt5  # noqa: E402
 
-from scanner import detect_setup, fetch, SetupAlert, DEFAULT_TIMEFRAME, LIMIT  # noqa: E402
+from scanner import detect_setup, SetupAlert  # noqa: E402
 from notifier import TelegramNotifier  # noqa: E402
+
+# Mapping timeframe scanner -> constante MT5 (apres import mt5)
+MT5_TIMEFRAME_MAP = {
+    "1m": mt5.TIMEFRAME_M1, "5m": mt5.TIMEFRAME_M5, "15m": mt5.TIMEFRAME_M15,
+    "30m": mt5.TIMEFRAME_M30, "1h": mt5.TIMEFRAME_H1, "4h": mt5.TIMEFRAME_H4,
+    "1d": mt5.TIMEFRAME_D1, "1w": mt5.TIMEFRAME_W1,
+}
 
 
 CONFIG_FILE = Path(__file__).parent / "mt5_config.json"
@@ -54,10 +61,22 @@ TRADE_LOG = Path(__file__).parent / "mt5_trades.log"
 # ===== SAFETY HARDCODE - NE PAS DESACTIVER SANS COMPRENDRE =====
 DEMO_ONLY = True
 MAX_LOT = 0.01
-SYMBOL_WHITELIST = {"BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT"}
+SYMBOL_WHITELIST = {
+    # Crypto
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
+    # Indices US
+    "US100", "US30",
+    # Metaux precieux
+    "XAUUSD", "XAGUSD",
+}
 COOLDOWN_HOURS = 4
 SCAN_INTERVAL_MIN = 15
-DEFAULT_SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT"]
+DEFAULT_SYMBOLS = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
+    "US100", "US30", "XAUUSD", "XAGUSD",
+]
+SCAN_TIMEFRAME = "4h"
+SCAN_LIMIT = 500
 
 
 def log(msg: str) -> None:
@@ -95,10 +114,12 @@ def setup_wizard():
     password = input("Mot de passe MT5 : ").strip()
     server = input("Serveur MT5 (ex: XMGlobal-Demo 7) : ").strip()
     print("\nMapping des symboles : entre le symbole exact tel qu'affiche dans MT5 Market Watch.")
-    print("Exemple : pour BTC/USDT du scanner, le broker XM peut l'appeler 'BTCUSD' ou 'BTCUSD.cash'.")
-    print("Si un symbole n'est pas dispo chez ton broker, mets une chaine vide (il sera ignore).\n")
+    print("Exemple : pour BTC/USDT, XM peut l'appeler 'BTCUSD' ou 'BTCUSD.cash'.")
+    print("Pour US100/US30 chez XM : souvent 'US100Cash' / 'US30Cash'.")
+    print("Pour XAUUSD/XAGUSD chez XM : souvent 'GOLD' / 'SILVER'.")
+    print("Si un symbole n'est pas dispo chez ton broker, mets une chaine vide.\n")
     symbol_map = {}
-    for s in ["BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT"]:
+    for s in DEFAULT_SYMBOLS:
         m = input(f"  {s} -> nom MT5 : ").strip()
         if m:
             symbol_map[s] = m
@@ -117,6 +138,18 @@ def setup_wizard():
         print("Connexion OK.")
     else:
         print("Connexion echec - verifie tes infos.")
+
+
+def add_symbols_to_existing_config(new_mapping: dict) -> None:
+    """Ajoute des symboles a la config existante sans tout reconfigurer."""
+    cfg = load_config()
+    if cfg is None:
+        print("Pas de config existante. Lance --setup d'abord.")
+        return
+    cfg.setdefault("symbol_map", {}).update(new_mapping)
+    save_config(cfg)
+    print(f"Config mise a jour : {list(new_mapping.keys())}")
+    print(f"Symboles totaux : {sorted(cfg['symbol_map'].keys())}")
 
 
 # ============================================================
@@ -262,6 +295,37 @@ def read_last_trade_time(symbol: str) -> Optional[datetime]:
 
 
 # ============================================================
+#                FETCH OHLCV (MT5 desktop)
+# ============================================================
+
+def fetch_mt5_ohlcv(mt5_symbol: str, timeframe: str, limit: int) -> pd.DataFrame:
+    """
+    Fetch OHLCV depuis MT5 desktop. Source unique pour TOUS les symboles
+    (crypto + indices + metaux), pour aligner detection et execution.
+    """
+    tf = MT5_TIMEFRAME_MAP.get(timeframe.lower())
+    if tf is None:
+        raise ValueError(f"Timeframe MT5 inconnu: {timeframe}")
+
+    # active le symbole dans Market Watch si besoin
+    info = mt5.symbol_info(mt5_symbol)
+    if info is None:
+        raise ValueError(f"Symbole MT5 introuvable: {mt5_symbol}")
+    if not info.visible:
+        mt5.symbol_select(mt5_symbol, True)
+
+    rates = mt5.copy_rates_from_pos(mt5_symbol, tf, 0, limit)
+    if rates is None or len(rates) == 0:
+        raise ValueError(f"Pas de donnees pour {mt5_symbol}: {mt5.last_error()}")
+
+    df = pd.DataFrame(rates)
+    df["ts"] = pd.to_datetime(df["time"], unit="s")
+    df.set_index("ts", inplace=True)
+    df["volume"] = df["tick_volume"].astype(float)
+    return df[["open", "high", "low", "close", "volume"]]
+
+
+# ============================================================
 #                   PLACEMENT ORDRES
 # ============================================================
 
@@ -283,8 +347,14 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         return False
     price = tick.ask if is_long else tick.bid
 
-    # Lot fixe (safety)
-    lot = MAX_LOT
+    # Lot : on prend le minimum du broker pour ce symbole (varie selon CFD).
+    # Pour crypto sur XM : 0.01. Pour US100/US30 : 0.1. Pour GOLD/SILVER : 0.01.
+    # Mode demo, on reste a la taille minimum imposee par le broker.
+    lot = max(MAX_LOT, info.volume_min)
+    # Round au volume_step (certains brokers imposent 0.1, 0.5 etc.)
+    if info.volume_step > 0:
+        lot = round(lot / info.volume_step) * info.volume_step
+    lot = max(lot, info.volume_min)
 
     # Round SL/TP au tick size
     digits = info.digits
@@ -327,15 +397,19 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
 #                      MAIN LOOP
 # ============================================================
 
-def scan_and_execute(cfg: dict, exchange, notifier: Optional[TelegramNotifier],
+def scan_and_execute(cfg: dict, notifier: Optional[TelegramNotifier],
                      dry_run: bool = False) -> None:
     if not safety_pre_check(cfg):
         return
 
     log(f"=== Scan {datetime.now().strftime('%H:%M:%S')} (dry_run={dry_run}) ===")
+    symbol_map = cfg.get("symbol_map", {})
     for symbol in DEFAULT_SYMBOLS:
+        if symbol not in symbol_map:
+            continue  # symbole non configure par l'utilisateur, skip
+        mt5_symbol = symbol_map[symbol]
         try:
-            df = fetch(exchange, symbol, DEFAULT_TIMEFRAME, LIMIT)
+            df = fetch_mt5_ohlcv(mt5_symbol, SCAN_TIMEFRAME, SCAN_LIMIT)
             setup = detect_setup(symbol, df)
             if not setup:
                 continue
@@ -345,14 +419,14 @@ def scan_and_execute(cfg: dict, exchange, notifier: Optional[TelegramNotifier],
                 log(f"[SKIP] {symbol} {setup.direction} : {reason}")
                 continue
 
-            log(f"[SETUP] {symbol} {setup.direction} entry={setup.entry:.2f} "
-                f"SL={setup.sl:.2f} TP={setup.tp:.2f}")
+            log(f"[SETUP] {symbol} {setup.direction} entry={setup.entry:.4f} "
+                f"SL={setup.sl:.4f} TP={setup.tp:.4f}")
 
             if place_order(setup, cfg, dry_run=dry_run):
                 if notifier and notifier.enabled and not dry_run:
                     notifier.send_setup(setup)
         except Exception as e:
-            log(f"[ERROR] {symbol} : {e}")
+            log(f"[ERROR] {symbol} ({mt5_symbol}) : {e}")
 
 
 def parse_args(argv):
@@ -399,13 +473,12 @@ def main():
         mt5.shutdown()
         return
 
-    exchange = ccxt.binance({"enableRateLimit": True})
     notifier = TelegramNotifier(silent=True)
 
     try:
         while True:
             try:
-                scan_and_execute(cfg, exchange, notifier, dry_run=dry_run)
+                scan_and_execute(cfg, notifier, dry_run=dry_run)
             except Exception as e:
                 log(f"[GLOBAL ERROR] {e}")
             if once:
