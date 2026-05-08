@@ -128,7 +128,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                             return SetupAlert(
                                 symbol=symbol, direction="LONG",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,
-                                reason=f"Bull OB {ob.bottom:.2f}-{ob.top:.2f} dans VA",
+                                reason=f"Order Block Haussier {ob.bottom:.2f}-{ob.top:.2f} dans Zone Valeur",
                                 rsi=last["rsi14"],
                                 distance_to_ema200_pct=(price - last["ema200"]) / last["ema200"] * 100,
                             )
@@ -144,7 +144,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                             return SetupAlert(
                                 symbol=symbol, direction="LONG",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,
-                                reason=f"Bull FVG {fvg.bottom:.2f}-{fvg.top:.2f} dans VA",
+                                reason=f"FVG Haussier {fvg.bottom:.2f}-{fvg.top:.2f} dans Zone Valeur",
                                 rsi=last["rsi14"],
                                 distance_to_ema200_pct=(price - last["ema200"]) / last["ema200"] * 100,
                             )
@@ -161,7 +161,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                             return SetupAlert(
                                 symbol=symbol, direction="SHORT",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,
-                                reason=f"Bear OB {ob.bottom:.2f}-{ob.top:.2f} dans VA",
+                                reason=f"Order Block Baissier {ob.bottom:.2f}-{ob.top:.2f} dans Zone Valeur",
                                 rsi=last["rsi14"],
                                 distance_to_ema200_pct=(price - last["ema200"]) / last["ema200"] * 100,
                             )
@@ -176,7 +176,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                             return SetupAlert(
                                 symbol=symbol, direction="SHORT",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,
-                                reason=f"Bear FVG {fvg.bottom:.2f}-{fvg.top:.2f} dans VA",
+                                reason=f"FVG Baissier {fvg.bottom:.2f}-{fvg.top:.2f} dans Zone Valeur",
                                 rsi=last["rsi14"],
                                 distance_to_ema200_pct=(price - last["ema200"]) / last["ema200"] * 100,
                             )

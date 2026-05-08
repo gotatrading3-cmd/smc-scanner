@@ -84,26 +84,32 @@ class TelegramNotifier:
             return f"{p:,.8f}"
 
     def send_setup(self, alert) -> bool:
-        """alert: SetupAlert du scanner."""
-        ts = alert.timestamp.strftime("%Y-%m-%d %H:%M UTC")
+        """alert: SetupAlert du scanner. Message en francais."""
+        ts = alert.timestamp.strftime("%d/%m/%Y %H:%M UTC")
         sl_pct = (alert.sl - alert.entry) / alert.entry * 100
         tp_pct = (alert.tp - alert.entry) / alert.entry * 100
         risk_pct = abs(sl_pct)
         reward_pct = abs(tp_pct)
 
-        emoji = "🟢" if alert.direction == "LONG" else "🔴"
-        arrow = "📈" if alert.direction == "LONG" else "📉"
+        if alert.direction == "LONG":
+            emoji = "🟢"
+            arrow = "📈"
+            label = "SIGNAL ACHAT"
+        else:
+            emoji = "🔴"
+            arrow = "📉"
+            label = "SIGNAL VENTE"
 
         f = self._fmt_price
         text = (
-            f"{emoji} *{alert.direction} SETUP* {arrow}\n"
+            f"{emoji} *{label}* {arrow}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"💎 *{alert.symbol}*\n"
             f"\n"
-            f"💰 Entry  `{f(alert.entry)}`\n"
-            f"🛑 Stop   `{f(alert.sl)}`  `{sl_pct:+.2f}%`\n"
-            f"🎯 Target `{f(alert.tp)}`  `{tp_pct:+.2f}%`\n"
-            f"⚖️ R:R     `1 : {alert.rr:.2f}`\n"
+            f"💰 Entree    `{f(alert.entry)}`\n"
+            f"🛑 Stop      `{f(alert.sl)}`  `{sl_pct:+.2f}%`\n"
+            f"🎯 Objectif  `{f(alert.tp)}`  `{tp_pct:+.2f}%`\n"
+            f"⚖️ Ratio R/R  `1 : {alert.rr:.2f}`\n"
             f"\n"
             f"📊 Risque {risk_pct:.2f}%   Gain potentiel {reward_pct:.2f}%\n"
             f"\n"
