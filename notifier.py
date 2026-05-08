@@ -75,18 +75,22 @@ class TelegramNotifier:
         sl_pct = (alert.sl - alert.entry) / alert.entry * 100
         tp_pct = (alert.tp - alert.entry) / alert.entry * 100
 
+        emoji = "🟢" if alert.direction == "LONG" else "🔴"
+        arrow = "📈" if alert.direction == "LONG" else "📉"
+
         text = (
-            f"*{alert.direction} setup* - `{alert.symbol}`\n"
+            f"{emoji} *{alert.direction} setup* {arrow}\n"
+            f"💎 `{alert.symbol}`\n"
             f"\n"
-            f"Entry : `{alert.entry:,.4f}`\n"
-            f"SL    : `{alert.sl:,.4f}`  ({sl_pct:+.2f}%)\n"
-            f"TP    : `{alert.tp:,.4f}`  ({tp_pct:+.2f}%)\n"
-            f"R:R   : `1:{alert.rr:.2f}`\n"
+            f"💰 Entry : `{alert.entry:,.4f}`\n"
+            f"🛑 SL    : `{alert.sl:,.4f}`  ({sl_pct:+.2f}%)\n"
+            f"🎯 TP    : `{alert.tp:,.4f}`  ({tp_pct:+.2f}%)\n"
+            f"⚖️  R:R  : `1:{alert.rr:.2f}`\n"
             f"\n"
-            f"_{alert.reason}_\n"
-            f"RSI : `{alert.rsi:.1f}`   EMA200 dist : `{alert.distance_to_ema200_pct:+.2f}%`\n"
+            f"📝 _{alert.reason}_\n"
+            f"📊 RSI : `{alert.rsi:.1f}`   📏 EMA200 dist : `{alert.distance_to_ema200_pct:+.2f}%`\n"
             f"\n"
-            f"`{ts}`"
+            f"⏰ `{ts}`"
         )
         return self.send(text)
 
@@ -176,7 +180,7 @@ def setup_from_token(token: str) -> bool:
     CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
     print(f"  Config sauvegardee : {CONFIG_FILE}")
     n = TelegramNotifier(token, chat_id)
-    if n.send("*Scanner SMC* configure !\nTu recevras les setups confluents ici."):
+    if n.send("🚀 *Scanner SMC* configure !\n\n✅ Tu recevras les setups confluents ici.\n📈 BTC / ETH / SOL / AVAX / LINK\n⏰ Scan toutes les 15 min sur GitHub Actions"):
         print("  Test message envoye - check ton Telegram.")
         return True
     print("  Echec envoi test. Token ou chat_id invalide ?")
