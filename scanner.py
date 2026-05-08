@@ -124,7 +124,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                     if vp_passes(ob.mid):
                         sl = ob.bottom - 0.3 * a
                         if price > sl:
-                            tp = price + 2 * (price - sl)
+                            tp = price + 3 * (price - sl)  # R:R 1:3 (V3 backtest PF 2.43)
                             return SetupAlert(
                                 symbol=symbol, direction="LONG",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,
@@ -140,7 +140,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                     if vp_passes(mid):
                         sl = fvg.bottom - 0.5 * a
                         if price > sl:
-                            tp = price + 2 * (price - sl)
+                            tp = price + 3 * (price - sl)  # R:R 1:3 (V3 backtest PF 2.43)
                             return SetupAlert(
                                 symbol=symbol, direction="LONG",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,
@@ -157,7 +157,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                     if vp_passes(ob.mid):
                         sl = ob.top + 0.3 * a
                         if sl > price:
-                            tp = price - 2 * (sl - price)
+                            tp = price - 3 * (sl - price)  # R:R 1:3 (V3 backtest PF 2.43)
                             return SetupAlert(
                                 symbol=symbol, direction="SHORT",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,
@@ -172,7 +172,7 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                     if vp_passes(mid):
                         sl = fvg.top + 0.5 * a
                         if sl > price:
-                            tp = price - 2 * (sl - price)
+                            tp = price - 3 * (sl - price)  # R:R 1:3 (V3 backtest PF 2.43)
                             return SetupAlert(
                                 symbol=symbol, direction="SHORT",
                                 timestamp=last.name, entry=price, sl=sl, tp=tp,

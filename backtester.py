@@ -13,7 +13,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import List, Optional, Callable
 
-from indicators import ema, rsi, atr, bbands
+from indicators import ema, rsi, atr, bbands, adx
 from volume_profile import compute_volume_profile
 
 
@@ -530,6 +530,278 @@ class OBRetestVPFiltered(Strategy):
         return None
 
 
+class OBRetestV3LargeTP(Strategy):
+    """
+    V3 = OBRetestVPFiltered avec R:R 1:3 (TP plus loin) au lieu de 1:2.
+    Hypothese : laisser plus courir les gains paye, vu la qualite du setup.
+    """
+    name = "OB_Retest_V3_RR3"
+    LOOKBACK_OB = 50
+    ATR_MULT = 2.0
+    LOOKFORWARD = 3
+    VP_LOOKBACK = 250
+    VP_BINS = 30
+    VP_RECOMPUTE_EVERY = 25
+    POC_PROXIMITY_PCT = 0.02
+    RR_TARGET = 3.0  # <-- la seule difference vs V1
+
+    def prepare(self, df):
+        df = df.copy()
+        df["ema200"] = ema(df["close"], 200)
+        df["atr"] = atr(df, 14)
+        bull_top = [np.nan] * len(df)
+        bull_bot = [np.nan] * len(df)
+        bear_top = [np.nan] * len(df)
+        bear_bot = [np.nan] * len(df)
+        opens = df["open"].to_numpy()
+        closes = df["close"].to_numpy()
+        highs = df["high"].to_numpy()
+        lows = df["low"].to_numpy()
+        atrs = df["atr"].to_numpy()
+        for i in range(15, len(df) - self.LOOKFORWARD):
+            a = atrs[i]
+            if pd.isna(a):
+                continue
+            future_h = highs[i + 1:i + 1 + self.LOOKFORWARD].max()
+            future_l = lows[i + 1:i + 1 + self.LOOKFORWARD].min()
+            thr = self.ATR_MULT * a
+            if future_h - closes[i] > thr:
+                for j in range(i, max(i - 3, -1), -1):
+                    if closes[j] < opens[j]:
+                        bull_top[j] = highs[j]
+                        bull_bot[j] = lows[j]
+                        break
+            if closes[i] - future_l > thr:
+                for j in range(i, max(i - 3, -1), -1):
+                    if closes[j] > opens[j]:
+                        bear_top[j] = highs[j]
+                        bear_bot[j] = lows[j]
+                        break
+        df["bull_ob_top"] = bull_top
+        df["bull_ob_bot"] = bull_bot
+        df["bear_ob_top"] = bear_top
+        df["bear_ob_bot"] = bear_bot
+        n = len(df)
+        poc_col = [np.nan] * n
+        vah_col = [np.nan] * n
+        val_col = [np.nan] * n
+        for i in range(self.VP_LOOKBACK, n, self.VP_RECOMPUTE_EVERY):
+            window = df.iloc[i - self.VP_LOOKBACK:i]
+            try:
+                vp = compute_volume_profile(window, bins=self.VP_BINS)
+                end = min(i + self.VP_RECOMPUTE_EVERY, n)
+                for k in range(i, end):
+                    poc_col[k] = vp.poc
+                    vah_col[k] = vp.vah
+                    val_col[k] = vp.val
+            except Exception:
+                pass
+        df["poc"] = poc_col
+        df["vah"] = vah_col
+        df["val"] = val_col
+        return df
+
+    def _vp_passes(self, level: float, cur) -> bool:
+        if pd.isna(cur["poc"]):
+            return True
+        in_va = cur["val"] <= level <= cur["vah"]
+        near_poc = abs(level - cur["poc"]) / cur["poc"] < self.POC_PROXIMITY_PCT
+        return in_va or near_poc
+
+    def entry_signal(self, df, i):
+        if i < max(200, self.VP_LOOKBACK):
+            return None
+        cur = df.iloc[i]
+        if pd.isna(cur["ema200"]) or pd.isna(cur["atr"]):
+            return None
+
+        if cur["close"] > cur["ema200"]:
+            start = max(0, i - self.LOOKBACK_OB)
+            for j in range(start, i):
+                top = df["bull_ob_top"].iloc[j]
+                bot = df["bull_ob_bot"].iloc[j]
+                if pd.isna(top):
+                    continue
+                if (df["close"].iloc[j + 1:i] < bot).any():
+                    continue
+                if cur["low"] <= top and cur["low"] >= bot * 0.997:
+                    if not self._vp_passes((top + bot) / 2, cur):
+                        continue
+                    entry = cur["close"]
+                    sl = bot - 0.3 * cur["atr"]
+                    if entry <= sl:
+                        continue
+                    tp = entry + (entry - sl) * self.RR_TARGET
+                    return Signal("long", sl=sl, tp=tp,
+                                  reason=f"OB+VP bull RR1:{self.RR_TARGET:.0f}")
+        if cur["close"] < cur["ema200"]:
+            start = max(0, i - self.LOOKBACK_OB)
+            for j in range(start, i):
+                top = df["bear_ob_top"].iloc[j]
+                bot = df["bear_ob_bot"].iloc[j]
+                if pd.isna(top):
+                    continue
+                if (df["close"].iloc[j + 1:i] > top).any():
+                    continue
+                if cur["high"] >= bot and cur["high"] <= top * 1.003:
+                    if not self._vp_passes((top + bot) / 2, cur):
+                        continue
+                    entry = cur["close"]
+                    sl = top + 0.3 * cur["atr"]
+                    if sl <= entry:
+                        continue
+                    tp = entry - (sl - entry) * self.RR_TARGET
+                    return Signal("short", sl=sl, tp=tp,
+                                  reason=f"OB+VP bear RR1:{self.RR_TARGET:.0f}")
+        return None
+
+
+class OBRetestV2Premium(Strategy):
+    """
+    V2 = OBRetestVPFiltered + ADX > 20 + volume > 1.3x moyenne 20p.
+
+    Idee : etre encore plus selectif. ADX filtre les ranges plats (faux signaux),
+    volume confirme l'interet institutionnel sur la bougie de retest.
+
+    SL : OB +/- 0.3 ATR.   TP : R:R 1:2.
+    """
+    name = "OB_Retest_V2_Premium"
+    LOOKBACK_OB = 50
+    ATR_MULT = 2.0
+    LOOKFORWARD = 3
+    VP_LOOKBACK = 250
+    VP_BINS = 30
+    VP_RECOMPUTE_EVERY = 25
+    POC_PROXIMITY_PCT = 0.02
+    ADX_MIN = 20.0
+    VOLUME_MULT = 1.3
+
+    def prepare(self, df):
+        df = df.copy()
+        df["ema200"] = ema(df["close"], 200)
+        df["atr"] = atr(df, 14)
+        df["adx"] = adx(df, 14)
+        df["vol_ma20"] = df["volume"].rolling(20).mean()
+        df["vol_ratio"] = df["volume"] / df["vol_ma20"]
+
+        # OBs (memes formules que V1)
+        bull_top = [np.nan] * len(df)
+        bull_bot = [np.nan] * len(df)
+        bear_top = [np.nan] * len(df)
+        bear_bot = [np.nan] * len(df)
+        opens = df["open"].to_numpy()
+        closes = df["close"].to_numpy()
+        highs = df["high"].to_numpy()
+        lows = df["low"].to_numpy()
+        atrs = df["atr"].to_numpy()
+        for i in range(15, len(df) - self.LOOKFORWARD):
+            a = atrs[i]
+            if pd.isna(a):
+                continue
+            future_h = highs[i + 1:i + 1 + self.LOOKFORWARD].max()
+            future_l = lows[i + 1:i + 1 + self.LOOKFORWARD].min()
+            thr = self.ATR_MULT * a
+            if future_h - closes[i] > thr:
+                for j in range(i, max(i - 3, -1), -1):
+                    if closes[j] < opens[j]:
+                        bull_top[j] = highs[j]
+                        bull_bot[j] = lows[j]
+                        break
+            if closes[i] - future_l > thr:
+                for j in range(i, max(i - 3, -1), -1):
+                    if closes[j] > opens[j]:
+                        bear_top[j] = highs[j]
+                        bear_bot[j] = lows[j]
+                        break
+        df["bull_ob_top"] = bull_top
+        df["bull_ob_bot"] = bull_bot
+        df["bear_ob_top"] = bear_top
+        df["bear_ob_bot"] = bear_bot
+
+        # VP par paliers
+        n = len(df)
+        poc_col = [np.nan] * n
+        vah_col = [np.nan] * n
+        val_col = [np.nan] * n
+        for i in range(self.VP_LOOKBACK, n, self.VP_RECOMPUTE_EVERY):
+            window = df.iloc[i - self.VP_LOOKBACK:i]
+            try:
+                vp = compute_volume_profile(window, bins=self.VP_BINS)
+                end = min(i + self.VP_RECOMPUTE_EVERY, n)
+                for k in range(i, end):
+                    poc_col[k] = vp.poc
+                    vah_col[k] = vp.vah
+                    val_col[k] = vp.val
+            except Exception:
+                pass
+        df["poc"] = poc_col
+        df["vah"] = vah_col
+        df["val"] = val_col
+        return df
+
+    def _vp_passes(self, level: float, cur) -> bool:
+        if pd.isna(cur["poc"]):
+            return True
+        in_va = cur["val"] <= level <= cur["vah"]
+        near_poc = abs(level - cur["poc"]) / cur["poc"] < self.POC_PROXIMITY_PCT
+        return in_va or near_poc
+
+    def entry_signal(self, df, i):
+        if i < max(200, self.VP_LOOKBACK):
+            return None
+        cur = df.iloc[i]
+        if pd.isna(cur["ema200"]) or pd.isna(cur["atr"]) or pd.isna(cur["adx"]):
+            return None
+
+        # Filtres premium V2
+        if cur["adx"] < self.ADX_MIN:
+            return None
+        if pd.isna(cur["vol_ratio"]) or cur["vol_ratio"] < self.VOLUME_MULT:
+            return None
+
+        if cur["close"] > cur["ema200"]:
+            start = max(0, i - self.LOOKBACK_OB)
+            for j in range(start, i):
+                top = df["bull_ob_top"].iloc[j]
+                bot = df["bull_ob_bot"].iloc[j]
+                if pd.isna(top):
+                    continue
+                if (df["close"].iloc[j + 1:i] < bot).any():
+                    continue
+                if cur["low"] <= top and cur["low"] >= bot * 0.997:
+                    if not self._vp_passes((top + bot) / 2, cur):
+                        continue
+                    entry = cur["close"]
+                    sl = bot - 0.3 * cur["atr"]
+                    if entry <= sl:
+                        continue
+                    tp = entry + (entry - sl) * 2
+                    return Signal("long", sl=sl, tp=tp,
+                                  reason=f"OB+VP+ADX+Vol bull {bot:.0f}-{top:.0f}")
+
+        if cur["close"] < cur["ema200"]:
+            start = max(0, i - self.LOOKBACK_OB)
+            for j in range(start, i):
+                top = df["bear_ob_top"].iloc[j]
+                bot = df["bear_ob_bot"].iloc[j]
+                if pd.isna(top):
+                    continue
+                if (df["close"].iloc[j + 1:i] > top).any():
+                    continue
+                if cur["high"] >= bot and cur["high"] <= top * 1.003:
+                    if not self._vp_passes((top + bot) / 2, cur):
+                        continue
+                    entry = cur["close"]
+                    sl = top + 0.3 * cur["atr"]
+                    if sl <= entry:
+                        continue
+                    tp = entry - (sl - entry) * 2
+                    return Signal("short", sl=sl, tp=tp,
+                                  reason=f"OB+VP+ADX+Vol bear {bot:.0f}-{top:.0f}")
+
+        return None
+
+
 class VolumeProfileRetest(Strategy):
     """
     Trade les retests des niveaux cles du Volume Profile : POC, VAH, VAL.
@@ -906,7 +1178,7 @@ def main():
     print(f"  {len(df)} bougies chargees, du {df.index[0]} au {df.index[-1]}\n")
 
     bt = Backtester(initial_capital=10_000, risk_pct=0.01)
-    strategies = [EmaCrossover, RsiMeanReversion, Confluence, FvgRetest, OrderBlockRetest, VolumeProfileRetest, OBRetestVPFiltered]
+    strategies = [EmaCrossover, RsiMeanReversion, Confluence, FvgRetest, OrderBlockRetest, VolumeProfileRetest, OBRetestVPFiltered, OBRetestV2Premium, OBRetestV3LargeTP]
 
     # Backtest plein
     full_results: dict = {}
