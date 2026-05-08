@@ -71,10 +71,8 @@ class TelegramNotifier:
 
     @staticmethod
     def _fmt_price(p: float) -> str:
-        """Formatage adaptatif : 2 dec pour les gros prix, plus precis pour les petits."""
-        if p >= 1000:
-            return f"{p:>12,.2f}"
-        elif p >= 100:
+        """Formatage adaptatif aligne a droite (largeur 12)."""
+        if p >= 100:
             return f"{p:>12,.2f}"
         elif p >= 10:
             return f"{p:>12,.3f}"
@@ -85,8 +83,12 @@ class TelegramNotifier:
         else:
             return f"{p:>12,.8f}"
 
+    @staticmethod
+    def _html_escape(s: str) -> str:
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
     def send_setup(self, alert) -> bool:
-        """alert: SetupAlert du scanner."""
+        """alert: SetupAlert du scanner. Render Telegram HTML pour police propre."""
         ts = alert.timestamp.strftime("%Y-%m-%d %H:%M UTC")
         sl_pct = (alert.sl - alert.entry) / alert.entry * 100
         tp_pct = (alert.tp - alert.entry) / alert.entry * 100
@@ -97,24 +99,30 @@ class TelegramNotifier:
         arrow = "📈" if alert.direction == "LONG" else "📉"
 
         f = self._fmt_price
+        e = self._html_escape
+
+        # Bloc <pre> = monospace aligne (la "police propre" : alignement parfait
+        # des chiffres en colonnes, comme un terminal pro).
         text = (
-            f"{emoji} *{alert.direction} SETUP* {arrow}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💎 *{alert.symbol}*\n"
+            f"{emoji} <b>{alert.direction} SETUP</b> {arrow}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"💎 <b>{e(alert.symbol)}</b>\n"
             f"\n"
-            f"💰 Entry  `{f(alert.entry)}`\n"
-            f"🛑 Stop   `{f(alert.sl)}`  `{sl_pct:+6.2f}%`\n"
-            f"🎯 Target `{f(alert.tp)}`  `{tp_pct:+6.2f}%`\n"
-            f"⚖️ R:R     `1 : {alert.rr:.2f}`\n"
+            f"<pre>"
+            f"Entry    {f(alert.entry)}\n"
+            f"Stop     {f(alert.sl)}  {sl_pct:+6.2f}%\n"
+            f"Target   {f(alert.tp)}  {tp_pct:+6.2f}%\n"
+            f"R:R           1 : {alert.rr:.2f}"
+            f"</pre>\n"
             f"\n"
-            f"📊 Risque {risk_pct:.2f}%   Gain potentiel {reward_pct:.2f}%\n"
+            f"📊 Risque <code>{risk_pct:.2f}%</code>  •  Gain <code>{reward_pct:.2f}%</code>\n"
             f"\n"
-            f"📝 _{alert.reason}_\n"
-            f"📈 RSI `{alert.rsi:.1f}`   📏 vs EMA200 `{alert.distance_to_ema200_pct:+.2f}%`\n"
+            f"📝 <i>{e(alert.reason)}</i>\n"
+            f"📈 RSI <code>{alert.rsi:.1f}</code>  •  EMA200 <code>{alert.distance_to_ema200_pct:+.2f}%</code>\n"
             f"\n"
-            f"⏰ `{ts}`"
+            f"⏰ <code>{ts}</code>"
         )
-        return self.send(text)
+        return self.send(text, parse_mode="HTML")
 
 
 def get_chat_id_helper(token: str) -> str:
