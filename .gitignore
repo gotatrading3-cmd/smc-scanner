@@ -6,10 +6,13 @@ mt5_trades.log
 .env
 
 # Logs
-scanner.log
-scanner.log.old
+*.log
+*.log.old
 *.tmp.log
 *.tmp.log.err
+
+# Pause flag
+.pause
 
 # Python
 __pycache__/
