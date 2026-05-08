@@ -1,0 +1,505 @@
+//@version=5
+// =====================================================================
+//  BTC SMC Analyzer  (Pine Script v5)
+//  Tout-en-un : tendance + SMC/ICT + structure + Fibonacci + tableau
+//
+//  TradingView -> Pine Editor -> Coller -> Save -> Add to chart
+// =====================================================================
+indicator("BTC SMC Analyzer", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ----- GROUPES INPUTS -----
+gT = "Tendance"
+gS = "Structure"
+gM = "SMC / ICT"
+gV = "Volatilite"
+gU = "Affichage"
+
+// ----- INPUTS -----
+emaFastLen  = input.int(20,  "EMA fast",  group=gT)
+emaMidLen   = input.int(50,  "EMA mid",   group=gT)
+emaSlowLen  = input.int(200, "EMA slow",  group=gT)
+
+swingLB     = input.int(5,   "Swing lookback", group=gS)
+showStruct  = input.bool(true, "Afficher BoS / CHoCH", group=gS)
+showFib     = input.bool(true, "Fibonacci dernier swing", group=gS)
+showSwings  = input.bool(true, "Marqueurs swing H/L", group=gS)
+
+showOB      = input.bool(true,  "Order Blocks", group=gM)
+obAtrMult   = input.float(1.5,  "OB seuil impulsion (x ATR)", group=gM, step=0.1, minval=0.5)
+maxOB       = input.int(8,      "Max OBs affiches", group=gM, minval=1, maxval=20)
+
+showFVG     = input.bool(true,  "Fair Value Gaps", group=gM)
+maxFVG      = input.int(8,      "Max FVGs affiches", group=gM, minval=1, maxval=20)
+
+showSweeps  = input.bool(true, "Liquidity Sweeps", group=gM)
+sweepLB     = input.int(20,    "Sweep lookback", group=gM)
+
+showBB      = input.bool(true, "Bollinger Bands", group=gV)
+
+// Volume Profile
+gVP         = "Volume Profile"
+showVP      = input.bool(true, "Afficher Volume Profile", group=gVP)
+vpLookback  = input.int(300, "Lookback (bougies)", group=gVP, minval=50, maxval=1000)
+vpBins      = input.int(25,  "Nb de bins (lignes)", group=gVP, minval=10, maxval=50)
+vpWidth     = input.int(40,  "Largeur max (bougies)", group=gVP, minval=10, maxval=100)
+
+// Confluent setups
+gC          = "Setups confluents"
+showSetups  = input.bool(true,  "Detecter setups confluents", group=gC)
+setupBosBars= input.int(20,    "BoS recent dans les N bougies", group=gC, minval=5, maxval=100)
+useVPFilter = input.bool(true,  "Filtrer par Volume Profile (zone dans VA)", group=gC)
+vpFilterTol = input.float(0.02, "Tolerance proximite POC", group=gC, step=0.005, minval=0.0)
+
+showTable   = input.bool(true, "Tableau info",    group=gU)
+
+// ----- INDICATEURS -----
+emaF  = ta.ema(close, emaFastLen)
+emaM  = ta.ema(close, emaMidLen)
+emaS  = ta.ema(close, emaSlowLen)
+atr14 = ta.atr(14)
+rsi14 = ta.rsi(close, 14)
+[bbMid, bbUp, bbLow] = ta.bb(close, 20, 2.0)
+[macdLine, sigLine, histLine] = ta.macd(close, 12, 26, 9)
+[diPlus, diMinus, adxVal] = ta.dmi(14, 14)
+
+plot(emaF, "EMA 20",  color=color.new(color.yellow, 0), linewidth=1)
+plot(emaM, "EMA 50",  color=color.new(color.orange, 0), linewidth=1)
+plot(emaS, "EMA 200", color=color.new(color.red, 0),    linewidth=2)
+plot(showBB ? bbUp  : na, "BB up",  color=color.new(color.aqua, 60))
+plot(showBB ? bbLow : na, "BB low", color=color.new(color.aqua, 60))
+plot(showBB ? bbMid : na, "BB mid", color=color.new(color.aqua, 80))
+
+// ----- SWING POINTS -----
+sh = ta.pivothigh(high, swingLB, swingLB)
+sl = ta.pivotlow(low,  swingLB, swingLB)
+
+plotshape(showSwings and not na(sh), "Swing high", shape.triangledown, location.abovebar,
+          color.new(color.red, 30), size=size.tiny, offset=-swingLB)
+plotshape(showSwings and not na(sl), "Swing low",  shape.triangleup,   location.belowbar,
+          color.new(color.green, 30), size=size.tiny, offset=-swingLB)
+
+// =====================================================================
+//                          ORDER BLOCKS
+// =====================================================================
+// Bull OB : derniere bougie rouge avant une bougie verte d'impulsion.
+// Bear OB : derniere bougie verte avant une bougie rouge d'impulsion.
+// Impulsion = corps > obAtrMult * ATR
+var box[] bullOBs = array.new<box>()
+var box[] bearOBs = array.new<box>()
+
+// tracking pour confluence : dernier OB non-mitige
+var float lastBullOBTop = na
+var float lastBullOBBot = na
+var bool  bullOBMitigated = false
+var float lastBearOBTop = na
+var float lastBearOBBot = na
+var bool  bearOBMitigated = false
+
+if showOB and barstate.isconfirmed and not na(atr14)
+    bullImpulse = (close - open) > obAtrMult * atr14
+    bearImpulse = (open - close) > obAtrMult * atr14
+
+    if bullImpulse and close[1] < open[1]
+        b = box.new(left=bar_index - 1, top=high[1], right=bar_index + 15, bottom=low[1],
+                    bgcolor=color.new(color.green, 85),
+                    border_color=color.new(color.green, 40),
+                    extend=extend.right)
+        array.push(bullOBs, b)
+        if array.size(bullOBs) > maxOB
+            box.delete(array.shift(bullOBs))
+        label.new(bar_index - 1, low[1], "Bull OB", style=label.style_label_up,
+                  color=color.new(color.green, 50), textcolor=color.white, size=size.tiny)
+        lastBullOBTop := high[1]
+        lastBullOBBot := low[1]
+        bullOBMitigated := false
+
+    if bearImpulse and close[1] > open[1]
+        b = box.new(left=bar_index - 1, top=high[1], right=bar_index + 15, bottom=low[1],
+                    bgcolor=color.new(color.red, 85),
+                    border_color=color.new(color.red, 40),
+                    extend=extend.right)
+        array.push(bearOBs, b)
+        if array.size(bearOBs) > maxOB
+            box.delete(array.shift(bearOBs))
+        label.new(bar_index - 1, high[1], "Bear OB", style=label.style_label_down,
+                  color=color.new(color.red, 50), textcolor=color.white, size=size.tiny)
+        lastBearOBTop := high[1]
+        lastBearOBBot := low[1]
+        bearOBMitigated := false
+
+// mise a jour de l'etat de mitigation a chaque bougie
+if not na(lastBullOBBot) and close < lastBullOBBot
+    bullOBMitigated := true
+if not na(lastBearOBTop) and close > lastBearOBTop
+    bearOBMitigated := true
+
+// =====================================================================
+//                       FAIR VALUE GAPS
+// =====================================================================
+// Bull FVG : high[2] < low[0]   -> gap entre la bougie i-2 et la bougie courante
+// Bear FVG : low[2]  > high[0]
+var box[] bullFVGs = array.new<box>()
+var box[] bearFVGs = array.new<box>()
+
+// tracking pour confluence : dernier FVG non-comble
+var float lastBullFVGTop = na
+var float lastBullFVGBot = na
+var bool  bullFVGFilled = false
+var float lastBearFVGTop = na
+var float lastBearFVGBot = na
+var bool  bearFVGFilled = false
+
+if showFVG and barstate.isconfirmed and bar_index >= 2
+    if high[2] < low
+        b = box.new(left=bar_index - 2, top=low, right=bar_index + 15, bottom=high[2],
+                    bgcolor=color.new(color.lime, 88),
+                    border_color=color.new(color.lime, 50),
+                    extend=extend.right)
+        array.push(bullFVGs, b)
+        if array.size(bullFVGs) > maxFVG
+            box.delete(array.shift(bullFVGs))
+        lastBullFVGTop := low
+        lastBullFVGBot := high[2]
+        bullFVGFilled := false
+
+    if low[2] > high
+        b = box.new(left=bar_index - 2, top=low[2], right=bar_index + 15, bottom=high,
+                    bgcolor=color.new(color.maroon, 88),
+                    border_color=color.new(color.maroon, 50),
+                    extend=extend.right)
+        array.push(bearFVGs, b)
+        if array.size(bearFVGs) > maxFVG
+            box.delete(array.shift(bearFVGs))
+        lastBearFVGTop := low[2]
+        lastBearFVGBot := high
+        bearFVGFilled := false
+
+// mise a jour de l'etat de fill
+if not na(lastBullFVGBot) and low < lastBullFVGBot
+    bullFVGFilled := true
+if not na(lastBearFVGTop) and high > lastBearFVGTop
+    bearFVGFilled := true
+
+// =====================================================================
+//                       LIQUIDITY SWEEPS
+// =====================================================================
+priorHigh = ta.highest(high[1], sweepLB)
+priorLow  = ta.lowest(low[1],   sweepLB)
+bullSweep = low  < priorLow  and close > priorLow
+bearSweep = high > priorHigh and close < priorHigh
+
+plotshape(showSweeps and bullSweep, "Bull Sweep", shape.labelup,   location.belowbar,
+          color.new(color.green, 0), text="SWEEP", textcolor=color.white, size=size.tiny)
+plotshape(showSweeps and bearSweep, "Bear Sweep", shape.labeldown, location.abovebar,
+          color.new(color.red, 0),   text="SWEEP", textcolor=color.white, size=size.tiny)
+
+// =====================================================================
+//                         BoS / CHoCH
+// =====================================================================
+var float lastSH = na
+var float lastSL = na
+var int   trendDir = 0  // 1 = up, -1 = down
+var int   lastBosBullBar = na
+var int   lastBosBearBar = na
+
+bosBull = false
+bosBear = false
+
+if showStruct
+    if not na(sh)
+        lastSH := sh
+    if not na(sl)
+        lastSL := sl
+
+    bosBull := not na(lastSH) and close > lastSH and close[1] <= lastSH
+    bosBear := not na(lastSL) and close < lastSL and close[1] >= lastSL
+
+    if bosBull
+        ev = trendDir == 1 ? "BoS" : "CHoCH"
+        line.new(bar_index - swingLB, lastSH, bar_index, lastSH,
+                 color=color.new(color.green, 30), width=2, style=line.style_dashed)
+        label.new(bar_index, lastSH, ev + " bull", style=label.style_label_lower_left,
+                  color=color.new(color.green, 30), textcolor=color.white, size=size.small)
+        trendDir := 1
+        lastSH := na
+        lastBosBullBar := bar_index
+
+    if bosBear
+        ev = trendDir == -1 ? "BoS" : "CHoCH"
+        line.new(bar_index - swingLB, lastSL, bar_index, lastSL,
+                 color=color.new(color.red, 30), width=2, style=line.style_dashed)
+        label.new(bar_index, lastSL, ev + " bear", style=label.style_label_upper_left,
+                  color=color.new(color.red, 30), textcolor=color.white, size=size.small)
+        trendDir := -1
+        lastSL := na
+        lastBosBearBar := bar_index
+
+// =====================================================================
+//                          FIBONACCI
+// =====================================================================
+var float fibSH = na
+var float fibSL = na
+
+if not na(sh)
+    fibSH := sh
+if not na(sl)
+    fibSL := sl
+
+var line[]  fibLines  = array.new<line>()
+var label[] fibLabels = array.new<label>()
+
+if showFib and not na(fibSH) and not na(fibSL) and barstate.islast
+    while array.size(fibLines) > 0
+        line.delete(array.shift(fibLines))
+    while array.size(fibLabels) > 0
+        label.delete(array.shift(fibLabels))
+
+    diff = fibSH - fibSL
+    levels = array.from(0.236, 0.382, 0.5, 0.618, 0.705, 0.786)
+
+    for i = 0 to array.size(levels) - 1
+        lvl   = array.get(levels, i)
+        price = fibSL + lvl * diff
+        col   = lvl == 0.5 ? color.orange : (lvl == 0.618 ? color.fuchsia : color.gray)
+        l = line.new(bar_index - 60, price, bar_index + 30, price,
+                     color=color.new(col, 30), width=1, style=line.style_dotted, extend=extend.right)
+        array.push(fibLines, l)
+        lab = label.new(bar_index + 30, price,
+                        "Fib " + str.tostring(lvl, "0.000") + "  " + str.tostring(price, format.mintick),
+                        style=label.style_label_left, color=color.new(col, 60),
+                        textcolor=color.white, size=size.tiny)
+        array.push(fibLabels, lab)
+
+// =====================================================================
+//                       RSI DIVERGENCES
+// =====================================================================
+var float prevSL_p = na
+var float prevSL_r = na
+var float prevSH_p = na
+var float prevSH_r = na
+
+bullDiv = false
+bearDiv = false
+
+if not na(sl)
+    if not na(prevSL_p) and sl < prevSL_p and rsi14[swingLB] > prevSL_r
+        bullDiv := true
+    prevSL_p := sl
+    prevSL_r := rsi14[swingLB]
+
+if not na(sh)
+    if not na(prevSH_p) and sh > prevSH_p and rsi14[swingLB] < prevSH_r
+        bearDiv := true
+    prevSH_p := sh
+    prevSH_r := rsi14[swingLB]
+
+plotshape(bullDiv, "Div haussiere", shape.triangleup,   location.belowbar,
+          color.new(color.green, 0), text="DIV+", size=size.tiny, offset=-swingLB)
+plotshape(bearDiv, "Div baissiere", shape.triangledown, location.abovebar,
+          color.new(color.red, 0),   text="DIV-", size=size.tiny, offset=-swingLB)
+
+// =====================================================================
+//                       VOLUME PROFILE
+// =====================================================================
+//   Bins horizontaux en fin de chart. POC, VAH, VAL.
+//   Recompute uniquement sur la derniere bougie.
+
+var box[]  vpBoxes = array.new<box>()
+var line[] vpLines = array.new<line>()
+var label[] vpLabels = array.new<label>()
+
+// niveaux VP persistants (utilises par le filtre confluence)
+var float vpPoc = na
+var float vpVah = na
+var float vpVal = na
+
+if showVP and barstate.islast and bar_index >= vpLookback
+    // nettoyage
+    while array.size(vpBoxes) > 0
+        box.delete(array.shift(vpBoxes))
+    while array.size(vpLines) > 0
+        line.delete(array.shift(vpLines))
+    while array.size(vpLabels) > 0
+        label.delete(array.shift(vpLabels))
+
+    pHi = ta.highest(high, vpLookback)
+    pLo = ta.lowest(low,  vpLookback)
+    binSize = (pHi - pLo) / vpBins
+
+    if binSize > 0
+        vols = array.new<float>(vpBins, 0.0)
+
+        // accumulation : volume affecte au bin du prix typique HLC/3 (1 op / bougie)
+        for i = 0 to vpLookback - 1
+            cVol = volume[i]
+            typ = (high[i] + low[i] + close[i]) / 3
+            if cVol > 0 and not na(typ)
+                idx = int((typ - pLo) / binSize)
+                idx := math.max(0, math.min(vpBins - 1, idx))
+                array.set(vols, idx, array.get(vols, idx) + cVol)
+
+        // POC
+        pocIdx = 0
+        pocVol = array.get(vols, 0)
+        for i = 1 to vpBins - 1
+            if array.get(vols, i) > pocVol
+                pocVol := array.get(vols, i)
+                pocIdx := i
+
+        // Value Area : 70% du volume autour du POC
+        totalVol = array.sum(vols)
+        target   = totalVol * 0.7
+        accum    = pocVol
+        loIdx    = pocIdx
+        hiIdx    = pocIdx
+        while accum < target and (loIdx > 0 or hiIdx < vpBins - 1)
+            nextLo = loIdx > 0           ? array.get(vols, loIdx - 1) : -1.0
+            nextHi = hiIdx < vpBins - 1  ? array.get(vols, hiIdx + 1) : -1.0
+            if nextHi >= nextLo and hiIdx < vpBins - 1
+                hiIdx := hiIdx + 1
+                accum := accum + array.get(vols, hiIdx)
+            else if loIdx > 0
+                loIdx := loIdx - 1
+                accum := accum + array.get(vols, loIdx)
+            else
+                break
+
+        pocPrice = pLo + (pocIdx + 0.5) * binSize
+        vahPrice = pLo + (hiIdx + 1) * binSize
+        valPrice = pLo + loIdx * binSize
+
+        // store dans les vars persistants
+        vpPoc := pocPrice
+        vpVah := vahPrice
+        vpVal := valPrice
+
+        // dessin des bins (boxes horizontales depuis bar_index vers la gauche)
+        maxV = pocVol
+        for i = 0 to vpBins - 1
+            v = array.get(vols, i)
+            if v > 0
+                binTop = pLo + (i + 1) * binSize
+                binBot = pLo + i * binSize
+                len = math.round(v / maxV * vpWidth)
+                if len > 0
+                    isPOC = i == pocIdx
+                    inVA  = i >= loIdx and i <= hiIdx
+                    col   = isPOC ? color.yellow : (inVA ? color.aqua : color.gray)
+                    b = box.new(left=bar_index - len, top=binTop, right=bar_index, bottom=binBot,
+                                bgcolor=color.new(col, 70), border_color=color.new(col, 30))
+                    array.push(vpBoxes, b)
+
+        // POC / VAH / VAL en lignes prolongees
+        l1 = line.new(bar_index - vpWidth, pocPrice, bar_index + 30, pocPrice,
+                      color=color.new(color.yellow, 0), width=2, extend=extend.right)
+        l2 = line.new(bar_index - vpWidth, vahPrice, bar_index + 30, vahPrice,
+                      color=color.new(color.aqua, 30), width=1, style=line.style_dashed, extend=extend.right)
+        l3 = line.new(bar_index - vpWidth, valPrice, bar_index + 30, valPrice,
+                      color=color.new(color.aqua, 30), width=1, style=line.style_dashed, extend=extend.right)
+        array.push(vpLines, l1)
+        array.push(vpLines, l2)
+        array.push(vpLines, l3)
+
+        // labels
+        lp = label.new(bar_index + 30, pocPrice, "POC " + str.tostring(pocPrice, format.mintick),
+                       style=label.style_label_left, color=color.new(color.yellow, 50),
+                       textcolor=color.black, size=size.small)
+        lv1 = label.new(bar_index + 30, vahPrice, "VAH " + str.tostring(vahPrice, format.mintick),
+                        style=label.style_label_left, color=color.new(color.aqua, 60),
+                        textcolor=color.white, size=size.tiny)
+        lv2 = label.new(bar_index + 30, valPrice, "VAL " + str.tostring(valPrice, format.mintick),
+                        style=label.style_label_left, color=color.new(color.aqua, 60),
+                        textcolor=color.white, size=size.tiny)
+        array.push(vpLabels, lp)
+        array.push(vpLabels, lv1)
+        array.push(vpLabels, lv2)
+
+// =====================================================================
+//                    SETUPS CONFLUENTS (alertes)
+// =====================================================================
+//   LONG  : tendance > EMA200 + prix touche un Bull OB ou Bull FVG actif
+//           + RSI 35-55 + BoS bull recent (< setupBosBars)
+//   SHORT : tendance < EMA200 + prix touche un Bear OB ou Bear FVG actif
+//           + RSI 45-65 + BoS bear recent
+
+inBullOB  = not na(lastBullOBTop) and not bullOBMitigated  and low <= lastBullOBTop  and high >= lastBullOBBot
+inBearOB  = not na(lastBearOBTop) and not bearOBMitigated  and low <= lastBearOBTop  and high >= lastBearOBBot
+inBullFVG = not na(lastBullFVGTop) and not bullFVGFilled    and low <= lastBullFVGTop and high >= lastBullFVGBot
+inBearFVG = not na(lastBearFVGTop) and not bearFVGFilled    and low <= lastBearFVGTop and high >= lastBearFVGBot
+
+recentBosBull = not na(lastBosBullBar) and (bar_index - lastBosBullBar) <= setupBosBars
+recentBosBear = not na(lastBosBearBar) and (bar_index - lastBosBearBar) <= setupBosBars
+
+trendUpFilter = close > emaS
+trendDnFilter = close < emaS
+
+// Filtre Volume Profile : la zone OB/FVG doit etre dans la VA ou pres du POC
+// Sur les bougies anciennes (vp pas encore calcule), le filtre est permissif (passes = true).
+bullZoneMid = inBullOB ? (lastBullOBTop + lastBullOBBot) / 2 :
+              inBullFVG ? (lastBullFVGTop + lastBullFVGBot) / 2 : na
+bearZoneMid = inBearOB ? (lastBearOBTop + lastBearOBBot) / 2 :
+              inBearFVG ? (lastBearFVGTop + lastBearFVGBot) / 2 : na
+
+vpBullPasses = na(vpVal) or na(bullZoneMid) or
+               (bullZoneMid >= vpVal and bullZoneMid <= vpVah) or
+               (not na(vpPoc) and math.abs(bullZoneMid - vpPoc) / vpPoc < vpFilterTol)
+vpBearPasses = na(vpVah) or na(bearZoneMid) or
+               (bearZoneMid >= vpVal and bearZoneMid <= vpVah) or
+               (not na(vpPoc) and math.abs(bearZoneMid - vpPoc) / vpPoc < vpFilterTol)
+
+vpLongOK  = not useVPFilter or vpBullPasses
+vpShortOK = not useVPFilter or vpBearPasses
+
+longConfluence  = showSetups and trendUpFilter and (inBullOB or inBullFVG) and rsi14 > 35 and rsi14 < 55 and recentBosBull and vpLongOK
+shortConfluence = showSetups and trendDnFilter and (inBearOB or inBearFVG) and rsi14 > 45 and rsi14 < 65 and recentBosBear and vpShortOK
+
+plotshape(longConfluence,  "LONG setup",  shape.diamond, location.belowbar,
+          color.new(color.lime, 0), text="LONG", textcolor=color.white, size=size.normal)
+plotshape(shortConfluence, "SHORT setup", shape.diamond, location.abovebar,
+          color.new(color.red, 0),  text="SHORT", textcolor=color.white, size=size.normal)
+
+// =====================================================================
+//                         INFO TABLE
+// =====================================================================
+if showTable and barstate.islast
+    var table info = table.new(position.top_right, 2, 10, bgcolor=color.new(color.black, 70), border_width=1)
+    trendLong = close > emaS ? "HAUSSIERE" : "BAISSIERE"
+    trendMed  = emaF > emaM ? "HAUSSIERE" : "BAISSIERE"
+    rsiState  = rsi14 < 30 ? "SURVENTE" : rsi14 > 70 ? "SURACHAT" : "neutre"
+    adxState  = adxVal > 25 ? "tendance forte" : "range"
+
+    table.cell(info, 0, 0, "Prix",        text_color=color.white, bgcolor=color.new(color.gray, 60))
+    table.cell(info, 1, 0, str.tostring(close, format.mintick), text_color=color.yellow, bgcolor=color.new(color.gray, 60))
+    table.cell(info, 0, 1, "Tendance LT", text_color=color.white)
+    table.cell(info, 1, 1, trendLong, text_color = trendLong == "HAUSSIERE" ? color.green : color.red)
+    table.cell(info, 0, 2, "Tendance MT", text_color=color.white)
+    table.cell(info, 1, 2, trendMed,  text_color = trendMed  == "HAUSSIERE" ? color.green : color.red)
+    table.cell(info, 0, 3, "EMA 20",   text_color=color.white)
+    table.cell(info, 1, 3, str.tostring(emaF, format.mintick), text_color=color.yellow)
+    table.cell(info, 0, 4, "EMA 50",   text_color=color.white)
+    table.cell(info, 1, 4, str.tostring(emaM, format.mintick), text_color=color.orange)
+    table.cell(info, 0, 5, "EMA 200",  text_color=color.white)
+    table.cell(info, 1, 5, str.tostring(emaS, format.mintick), text_color=color.red)
+    table.cell(info, 0, 6, "RSI(14)",  text_color=color.white)
+    table.cell(info, 1, 6, str.tostring(rsi14, "#.#") + " " + rsiState, text_color=color.aqua)
+    table.cell(info, 0, 7, "ATR(14)",  text_color=color.white)
+    table.cell(info, 1, 7, str.tostring(atr14, format.mintick), text_color=color.white)
+    table.cell(info, 0, 8, "ADX",      text_color=color.white)
+    table.cell(info, 1, 8, str.tostring(adxVal, "#.#") + " " + adxState, text_color=color.white)
+    table.cell(info, 0, 9, "MACD",     text_color=color.white)
+    table.cell(info, 1, 9, histLine > 0 ? "haussier" : "baissier",
+               text_color = histLine > 0 ? color.green : color.red)
+
+// =====================================================================
+//                          ALERTS
+// =====================================================================
+alertcondition(ta.crossover(emaF, emaM),  "EMA20/50 cross up",   "EMA 20 > EMA 50")
+alertcondition(ta.crossunder(emaF, emaM), "EMA20/50 cross down", "EMA 20 < EMA 50")
+alertcondition(bullSweep, "Bull liquidity sweep", "Sweep haussier (meche sous low)")
+alertcondition(bearSweep, "Bear liquidity sweep", "Sweep baissier (meche sur high)")
+alertcondition(bullDiv,   "RSI bull divergence",  "Divergence haussiere RSI")
+alertcondition(bearDiv,   "RSI bear divergence",  "Divergence baissiere RSI")
+alertcondition(longConfluence,  "LONG confluent setup",
+               "Setup LONG : trend + Bull OB/FVG + RSI 35-55 + BoS bull recent")
+alertcondition(shortConfluence, "SHORT confluent setup",
+               "Setup SHORT : trend + Bear OB/FVG + RSI 45-65 + BoS bear recent")

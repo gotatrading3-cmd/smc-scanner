@@ -1,0 +1,122 @@
+//@version=5
+// =====================================================================
+//  BTC Confluence Analyzer  (Pine Script v5)
+//  Outil EDUCATIF - affiche les zones techniques cles sur le graphique.
+//  Ne genere PAS d'ordres de trading.
+//
+//  Dans TradingView : Pine Editor > Coller > Add to Chart
+// =====================================================================
+indicator("BTC Confluence Analyzer", overlay=true, max_lines_count=200, max_labels_count=200)
+
+// ----- INPUTS -----
+emaFastLen   = input.int(20,  "EMA rapide",  group="Tendance")
+emaMidLen    = input.int(50,  "EMA moyenne", group="Tendance")
+emaSlowLen   = input.int(200, "EMA lente",   group="Tendance")
+rsiLen       = input.int(14,  "RSI period",  group="Momentum")
+atrLen       = input.int(14,  "ATR period",  group="Volatilite")
+bbLen        = input.int(20,  "BB period",   group="Volatilite")
+bbMult       = input.float(2.0, "BB stddev", group="Volatilite")
+swingLB      = input.int(5,   "Swing lookback", group="Structure")
+showFib      = input.bool(true, "Afficher Fibonacci", group="Structure")
+showSR       = input.bool(true, "Afficher S/R swings", group="Structure")
+showLabels   = input.bool(true, "Afficher labels indicateurs", group="Affichage")
+
+// ----- INDICATEURS -----
+emaFast = ta.ema(close, emaFastLen)
+emaMid  = ta.ema(close, emaMidLen)
+emaSlow = ta.ema(close, emaSlowLen)
+rsiVal  = ta.rsi(close, rsiLen)
+atrVal  = ta.atr(atrLen)
+[bbMid, bbUp, bbLow] = ta.bb(close, bbLen, bbMult)
+[macdLine, sigLine, histLine] = ta.macd(close, 12, 26, 9)
+
+plot(emaFast, "EMA 20",  color=color.new(color.yellow, 0), linewidth=1)
+plot(emaMid,  "EMA 50",  color=color.new(color.orange, 0), linewidth=1)
+plot(emaSlow, "EMA 200", color=color.new(color.red, 0),    linewidth=2)
+plot(bbUp,    "BB up",   color=color.new(color.aqua, 60))
+plot(bbLow,   "BB low",  color=color.new(color.aqua, 60))
+plot(bbMid,   "BB mid",  color=color.new(color.aqua, 80))
+
+// ----- SWING POINTS -----
+sh = ta.pivothigh(high, swingLB, swingLB)
+sl = ta.pivotlow(low,  swingLB, swingLB)
+
+var float lastSH = na
+var float lastSL = na
+if not na(sh)
+    lastSH := sh
+    if showSR
+        line.new(bar_index[swingLB], sh, bar_index + 5, sh, color=color.new(color.red, 30), width=1, extend=extend.right, style=line.style_dashed)
+if not na(sl)
+    lastSL := sl
+    if showSR
+        line.new(bar_index[swingLB], sl, bar_index + 5, sl, color=color.new(color.green, 30), width=1, extend=extend.right, style=line.style_dashed)
+
+// ----- FIBONACCI sur le dernier swing -----
+if showFib and not na(lastSH) and not na(lastSL)
+    diff = lastSH - lastSL
+    levels = array.from(0.236, 0.382, 0.5, 0.618, 0.786)
+    colors = array.from(color.gray, color.yellow, color.orange, color.fuchsia, color.gray)
+    if barstate.islast
+        for i = 0 to array.size(levels) - 1
+            lvl   = array.get(levels, i)
+            price = lastSL + lvl * diff
+            col   = array.get(colors, i)
+            line.new(bar_index - 50, price, bar_index + 10, price, color=color.new(col, 30), width=1, extend=extend.right)
+            label.new(bar_index + 10, price, "Fib " + str.tostring(lvl) + " : " + str.tostring(price, "#.##"),
+                      style=label.style_label_left, color=color.new(col, 70), textcolor=color.white, size=size.small)
+
+// ----- DIVERGENCES RSI -----
+bullDiv = false
+bearDiv = false
+var float prevSL_price = na
+var float prevSL_rsi   = na
+var float prevSH_price = na
+var float prevSH_rsi   = na
+
+if not na(sl)
+    if not na(prevSL_price) and sl < prevSL_price and rsiVal[swingLB] > prevSL_rsi
+        bullDiv := true
+    prevSL_price := sl
+    prevSL_rsi := rsiVal[swingLB]
+
+if not na(sh)
+    if not na(prevSH_price) and sh > prevSH_price and rsiVal[swingLB] < prevSH_rsi
+        bearDiv := true
+    prevSH_price := sh
+    prevSH_rsi := rsiVal[swingLB]
+
+plotshape(bullDiv, "Div haussiere RSI", shape.triangleup,   location.belowbar, color.green, text="BULL DIV", size=size.tiny)
+plotshape(bearDiv, "Div baissiere RSI", shape.triangledown, location.abovebar, color.red,   text="BEAR DIV", size=size.tiny)
+
+// ----- TABLEAU INFO -----
+if showLabels and barstate.islast
+    var table info = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 70), border_width=1)
+    trendLong = close > emaSlow ? "HAUSSIERE" : "BAISSIERE"
+    rsiState  = rsiVal < 30 ? "SURVENTE" : rsiVal > 70 ? "SURACHAT" : "neutre"
+    macdState = histLine > 0 ? "haussier" : "baissier"
+
+    table.cell(info, 0, 0, "Prix",      text_color=color.white)
+    table.cell(info, 1, 0, str.tostring(close, "#.##"), text_color=color.yellow)
+    table.cell(info, 0, 1, "Tendance",  text_color=color.white)
+    table.cell(info, 1, 1, trendLong,   text_color = trendLong == "HAUSSIERE" ? color.green : color.red)
+    table.cell(info, 0, 2, "RSI",       text_color=color.white)
+    table.cell(info, 1, 2, str.tostring(rsiVal, "#.#") + " (" + rsiState + ")", text_color=color.aqua)
+    table.cell(info, 0, 3, "MACD",      text_color=color.white)
+    table.cell(info, 1, 3, macdState,   text_color = histLine > 0 ? color.green : color.red)
+    table.cell(info, 0, 4, "ATR",       text_color=color.white)
+    table.cell(info, 1, 4, str.tostring(atrVal, "#.##"), text_color=color.white)
+    table.cell(info, 0, 5, "EMA20",     text_color=color.white)
+    table.cell(info, 1, 5, str.tostring(emaFast, "#.##"), text_color=color.yellow)
+    table.cell(info, 0, 6, "EMA50",     text_color=color.white)
+    table.cell(info, 1, 6, str.tostring(emaMid, "#.##"),  text_color=color.orange)
+    table.cell(info, 0, 7, "EMA200",    text_color=color.white)
+    table.cell(info, 1, 7, str.tostring(emaSlow, "#.##"), text_color=color.red)
+
+// ----- ALERTS (lecture, pas signaux) -----
+alertcondition(ta.crossover(emaFast, emaMid),  "Croisement EMA20/50 haussier", "EMA 20 a croise au-dessus de EMA 50")
+alertcondition(ta.crossunder(emaFast, emaMid), "Croisement EMA20/50 baissier", "EMA 20 a croise en-dessous de EMA 50")
+alertcondition(ta.crossover(rsiVal, 30),       "RSI sort de survente",         "RSI > 30")
+alertcondition(ta.crossunder(rsiVal, 70),      "RSI sort de surachat",         "RSI < 70")
+alertcondition(bullDiv, "Divergence RSI haussiere",  "Possible divergence haussiere")
+alertcondition(bearDiv, "Divergence RSI baissiere",  "Possible divergence baissiere")

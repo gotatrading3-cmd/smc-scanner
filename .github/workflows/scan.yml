@@ -1,0 +1,50 @@
+name: SMC Scanner
+
+on:
+  schedule:
+    # Toutes les 15 min (cron UTC). GitHub peut avoir 5-10 min de jitter.
+    - cron: '*/15 * * * *'
+  workflow_dispatch:  # bouton "Run workflow" manuel dans l'UI GitHub
+
+# Necessaire pour que l'action puisse commit le state file
+permissions:
+  contents: write
+
+# Empeche 2 scans simultanes (sinon conflit de commit du state)
+concurrency:
+  group: scanner
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install deps
+        run: pip install ccxt pandas numpy
+
+      - name: Run scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scanner.py --once
+
+      - name: Commit dedup state si modifie
+        if: success()
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions"
+          git add scanner_state.json 2>/dev/null || true
+          if ! git diff --cached --quiet 2>/dev/null; then
+            git commit -m "[skip ci] update scanner state"
+            git push
+          fi
