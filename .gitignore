@@ -1,5 +1,7 @@
 # Credentials - JAMAIS pousser sur GitHub
 telegram.json
+mt5_config.json
+mt5_trades.log
 *.token
 .env
 
