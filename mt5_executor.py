@@ -123,15 +123,46 @@ def setup_wizard():
 #                      MT5 CONNECTION
 # ============================================================
 
-def connect_mt5(cfg: dict) -> bool:
-    if not mt5.initialize(
-        login=cfg["login"],
-        password=cfg["password"],
-        server=cfg["server"],
-    ):
-        log(f"MT5 init failed: {mt5.last_error()}")
-        return False
-    return True
+MT5_TERMINAL_CANDIDATES = [
+    r"C:\Program Files\XM Global MT5\terminal64.exe",
+    r"C:\Program Files\XMTrading MT5\terminal64.exe",
+    r"C:\Program Files\XM MT5\terminal64.exe",
+    r"C:\Program Files\MetaTrader 5\terminal64.exe",
+]
+
+
+def find_mt5_terminal() -> Optional[str]:
+    for c in MT5_TERMINAL_CANDIDATES:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def connect_mt5(cfg: dict, max_retry: int = 1, retry_delay: int = 30) -> bool:
+    """
+    Connecte a MT5. Si MT5 n'est pas en cours, le launch automatiquement
+    (via le parametre path de mt5.initialize).
+    Si max_retry > 1, retry avec backoff.
+    """
+    terminal_path = cfg.get("terminal_path") or find_mt5_terminal()
+    init_kwargs = {
+        "login": cfg["login"],
+        "password": cfg["password"],
+        "server": cfg["server"],
+    }
+    if terminal_path:
+        init_kwargs["path"] = terminal_path
+
+    for attempt in range(1, max_retry + 1):
+        if mt5.initialize(**init_kwargs):
+            return True
+        err = mt5.last_error()
+        if attempt < max_retry:
+            log(f"MT5 init failed (attempt {attempt}/{max_retry}): {err} - retry dans {retry_delay}s")
+            time.sleep(retry_delay)
+        else:
+            log(f"MT5 init failed: {err}")
+    return False
 
 
 def log_account_info() -> Optional[dict]:
@@ -158,11 +189,22 @@ def log_account_info() -> Optional[dict]:
 # ============================================================
 
 def safety_pre_check(cfg: dict) -> bool:
-    """Verifications avant de placer un ordre. Refuse si tout n'est pas OK."""
+    """Verifications avant scan. Si MT5 est down, tente une reconnexion."""
     info = mt5.account_info()
     if info is None:
-        log("[SAFETY] Pas d'info compte - REFUS")
-        return False
+        log("[SAFETY] Pas d'info compte - tentative reconnexion MT5...")
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        if not connect_mt5(cfg, max_retry=2, retry_delay=15):
+            log("[SAFETY] Reconnexion echec - SKIP ce scan")
+            return False
+        info = mt5.account_info()
+        if info is None:
+            log("[SAFETY] Toujours pas d'info compte - SKIP")
+            return False
+        log("[SAFETY] Reconnexion MT5 reussie")
     if DEMO_ONLY and info.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
         log(f"[SAFETY] Compte non-demo (mode={info.trade_mode}) - REFUS (DEMO_ONLY=True)")
         return False
@@ -346,8 +388,9 @@ def main():
     log(f"  Whitelist  = {sorted(SYMBOL_WHITELIST)}")
     log(f"  dry_run    = {dry_run}")
 
-    if not connect_mt5(cfg):
-        log("Connexion MT5 echec - verifie que MT5 est ouvert et que tes credentials sont bons.")
+    # Au boot, MT5 peut prendre 30-60s a etre pret. Retry avec backoff.
+    if not connect_mt5(cfg, max_retry=10, retry_delay=30):
+        log("Connexion MT5 echec apres retries - verifie MT5 desktop ouvert.")
         return
 
     info = log_account_info()
