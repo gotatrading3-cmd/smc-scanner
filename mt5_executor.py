@@ -346,15 +346,30 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         log(f"[ORDER] tick indisponible {mt5_symbol}")
         return False
     price = tick.ask if is_long else tick.bid
+    spread = tick.ask - tick.bid
 
     # Lot : on prend le minimum du broker pour ce symbole (varie selon CFD).
-    # Pour crypto sur XM : 0.01. Pour US100/US30 : 0.1. Pour GOLD/SILVER : 0.01.
-    # Mode demo, on reste a la taille minimum imposee par le broker.
     lot = max(MAX_LOT, info.volume_min)
-    # Round au volume_step (certains brokers imposent 0.1, 0.5 etc.)
     if info.volume_step > 0:
         lot = round(lot / info.volume_step) * info.volume_step
     lot = max(lot, info.volume_min)
+
+    # === SPREAD COMPENSATION + R:R 1:2 ===
+    # Le SL signal est calcule "pure" par le scanner (sans tenir compte du spread).
+    # Sur MT5 le SL est verifie sur le bid (pour LONG) ou l'ask (pour SHORT).
+    # Si on garde le SL signal tel quel, le spread pose le SL plus pres qu'attendu
+    # -> le SL peut etre touche juste par le spread.
+    # Solution : elargir le SL d'un montant = spread + petit buffer,
+    # puis recalculer TP pour avoir R:R 1:2 depuis le SL elargi.
+    spread_buffer = spread * 1.5  # 1.5x spread = marge confortable
+    if is_long:
+        sl_adjusted = setup.sl - spread_buffer
+        risk = price - sl_adjusted
+        tp_adjusted = price + 2.0 * risk  # R:R 1:2
+    else:
+        sl_adjusted = setup.sl + spread_buffer
+        risk = sl_adjusted - price
+        tp_adjusted = price - 2.0 * risk
 
     # Round SL/TP au tick size
     digits = info.digits
@@ -365,8 +380,8 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         "volume": lot,
         "type": order_type,
         "price": price,
-        "sl": round(setup.sl, digits),
-        "tp": round(setup.tp, digits),
+        "sl": round(sl_adjusted, digits),
+        "tp": round(tp_adjusted, digits),
         "deviation": 50,
         "magic": 20260508,
         "comment": "SMC scanner auto",
@@ -376,11 +391,14 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
 
     if dry_run:
         log(f"[DRY-RUN] Aurait place : {mt5_symbol} {setup.direction} lot={lot} "
-            f"price={price:.{digits}f} SL={setup.sl:.{digits}f} TP={setup.tp:.{digits}f}")
+            f"price={price:.{digits}f} spread={spread:.{digits}f} "
+            f"SL={sl_adjusted:.{digits}f} (signal {setup.sl:.{digits}f} elargi) "
+            f"TP={tp_adjusted:.{digits}f} R:R=1:2")
         return True
 
     log(f"[ORDER] Envoi : {mt5_symbol} {setup.direction} lot={lot} "
-        f"price={price:.{digits}f} SL={setup.sl:.{digits}f} TP={setup.tp:.{digits}f}")
+        f"price={price:.{digits}f} spread={spread:.{digits}f} "
+        f"SL={sl_adjusted:.{digits}f} TP={tp_adjusted:.{digits}f} R:R=1:2")
     result = mt5.order_send(request)
     if result is None:
         log(f"[ORDER] Echec : last_error={mt5.last_error()}")
