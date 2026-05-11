@@ -229,23 +229,37 @@ def make_pnl_bars(by_sym: dict, width: int = 720) -> str:
 
 
 LOGO_SVG = '''
-<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" class="logo">
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="logo">
   <defs>
     <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#fcd34d"/>
-      <stop offset="50%" stop-color="#f59e0b"/>
-      <stop offset="100%" stop-color="#b45309"/>
+      <stop offset="0%" stop-color="#fde68a"/>
+      <stop offset="30%" stop-color="#fbbf24"/>
+      <stop offset="70%" stop-color="#d97706"/>
+      <stop offset="100%" stop-color="#92400e"/>
     </linearGradient>
-    <filter id="glow"><feGaussianBlur stdDeviation="1.5"/></filter>
+    <filter id="grain">
+      <feTurbulence type="fractalNoise" baseFrequency="2.5" numOctaves="3" seed="2"/>
+      <feColorMatrix values="0 0 0 0 0.9
+                             0 0 0 0 0.7
+                             0 0 0 0 0.2
+                             0 0 0 0.45 0"/>
+      <feComposite in2="SourceGraphic" operator="in"/>
+    </filter>
   </defs>
-  <circle cx="32" cy="32" r="30" fill="url(#gold)" stroke="#fbbf24" stroke-width="1"/>
-  <rect x="14" y="32" width="4" height="14" fill="#0d1117" rx="1"/>
-  <rect x="22" y="22" width="4" height="24" fill="#3fb950" rx="1"/>
-  <rect x="30" y="28" width="4" height="18" fill="#f85149" rx="1"/>
-  <rect x="38" y="20" width="4" height="26" fill="#3fb950" rx="1"/>
-  <rect x="46" y="26" width="4" height="20" fill="#0d1117" rx="1"/>
-  <polyline points="16,38 24,28 32,32 40,22 48,30" stroke="#0d1117" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="32" y="58" text-anchor="middle" fill="#0d1117" font-size="6" font-weight="900" font-family="system-ui">GOTA</text>
+  <!-- Double peaks "W inverse" dore avec effet grain -->
+  <g>
+    <path d="M 10 60 L 30 25 L 38 38 L 50 12 L 62 38 L 70 25 L 90 60 L 78 60 L 70 45 L 60 60 L 50 35 L 40 60 L 30 45 L 22 60 Z" fill="url(#gold)"/>
+    <path d="M 10 60 L 30 25 L 38 38 L 50 12 L 62 38 L 70 25 L 90 60 L 78 60 L 70 45 L 60 60 L 50 35 L 40 60 L 30 45 L 22 60 Z" fill="url(#gold)" filter="url(#grain)" opacity="0.6"/>
+  </g>
+  <!-- Petites fleches au-dessus de chaque peak -->
+  <polyline points="48,14 50,10 52,14" stroke="#fde68a" stroke-width="1.2" fill="none"/>
+  <polyline points="28,27 30,23 32,27" stroke="#fde68a" stroke-width="1" fill="none"/>
+  <polyline points="68,27 70,23 72,27" stroke="#fde68a" stroke-width="1" fill="none"/>
+  <!-- Slashes -->
+  <line x1="6" y1="64" x2="22" y2="64" stroke="url(#gold)" stroke-width="1.5"/>
+  <line x1="78" y1="64" x2="94" y2="64" stroke="url(#gold)" stroke-width="1.5"/>
+  <!-- GOTA en serif elegant -->
+  <text x="50" y="92" text-anchor="middle" fill="#f5f5f5" font-size="18" font-family="Georgia, 'Times New Roman', serif" font-weight="400" letter-spacing="3">GOTA</text>
 </svg>
 '''
 
