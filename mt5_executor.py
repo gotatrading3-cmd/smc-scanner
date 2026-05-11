@@ -67,8 +67,9 @@ TRAILING_TO_BE_AT_R = 1.0            # SL remonte a breakeven quand prix atteint
 
 # ===== SAFETY HARDCODE - NE PAS DESACTIVER SANS COMPRENDRE =====
 DEMO_ONLY = True
-MAX_LOT = 1.0  # plafond absolu, mais le lot reel est calcule via RISK_PCT_PER_TRADE
-RISK_PCT_PER_TRADE = 0.01  # 1% de l'equity max risque par trade
+MAX_LOT = 1.0
+RISK_PCT_PER_TRADE = 0.005  # 0.5% de l'equity max risque par trade (scalping)
+RR_TARGET = 1.5  # Take profit a 1.5x le risque (scalping rapide)
 SYMBOL_WHITELIST = {
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
@@ -81,8 +82,8 @@ SYMBOL_WHITELIST = {
     # Commodities (si dispos)
     "USOIL", "NATGAS",
 }
-COOLDOWN_HOURS = 4
-SCAN_INTERVAL_MIN = 15
+COOLDOWN_HOURS = 1  # scalping : cooldown court
+SCAN_INTERVAL_MIN = 5  # scan toutes les 5 min
 DEFAULT_SYMBOLS = [
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
@@ -95,7 +96,7 @@ DEFAULT_SYMBOLS = [
     # Commodities
     "USOIL", "NATGAS",
 ]
-SCAN_TIMEFRAME = "4h"
+SCAN_TIMEFRAME = "15m"  # scalping H4 -> M15
 SCAN_LIMIT = 500
 
 
@@ -523,11 +524,11 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
     if is_long:
         sl_adjusted = setup.sl - spread_buffer
         risk = price - sl_adjusted
-        tp_adjusted = price + 2.0 * risk  # R:R 1:2
+        tp_adjusted = price + RR_TARGET * risk  # R:R configurable
     else:
         sl_adjusted = setup.sl + spread_buffer
         risk = sl_adjusted - price
-        tp_adjusted = price - 2.0 * risk
+        tp_adjusted = price - RR_TARGET * risk
 
     # === RISK-BASED LOT SIZING ===
     # Calcule le lot pour risquer exactement RISK_PCT_PER_TRADE de l'equity.
@@ -581,14 +582,14 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         log(f"[DRY-RUN] Aurait place : {mt5_symbol} {setup.direction} lot={lot} "
             f"price={price:.{digits}f} spread={spread:.{digits}f} "
             f"SL={sl_adjusted:.{digits}f} (signal {setup.sl:.{digits}f} elargi) "
-            f"TP={tp_adjusted:.{digits}f} R:R=1:2")
+            f"TP={tp_adjusted:.{digits}f} R:R=1:{RR_TARGET}")
         return True
 
     actual_risk = lot * risk_per_lot
     log(f"[ORDER] Envoi : {mt5_symbol} {setup.direction} lot={lot} "
         f"risque={actual_risk:.2f}$ ({actual_risk/equity*100:.2f}% equity) "
         f"price={price:.{digits}f} spread={spread:.{digits}f} "
-        f"SL={sl_adjusted:.{digits}f} TP={tp_adjusted:.{digits}f} R:R=1:2")
+        f"SL={sl_adjusted:.{digits}f} TP={tp_adjusted:.{digits}f} R:R=1:{RR_TARGET}")
     result = mt5.order_send(request)
     if result is None:
         log(f"[ORDER] Echec : last_error={mt5.last_error()}")
