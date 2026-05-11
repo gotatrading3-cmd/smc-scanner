@@ -62,7 +62,10 @@ PAUSE_FILE = Path(__file__).parent / ".pause"
 
 # Filtres temporels (UTC)
 SKIP_WEEKEND_FOR_NON_CRYPTO = True   # vendredi 20h UTC -> lundi 00h UTC
-DRAWDOWN_24H_MAX_PCT = 3.0           # circuit breaker si -3% en 24h
+# Circuit breaker : se declenche au plus serre des deux
+DRAWDOWN_24H_MAX_PCT = 30.0          # 30% en 24h (adapte au scalp aggresif)
+DAILY_LOSS_USD_MAX = 15.0            # OU plafond absolu $15 perte sur 24h
+MIN_EQUITY_USD = 2.0                 # pause si equity tombe sous $2 (sauvegarde)
 TRAILING_TO_BE_AT_R = 1.0            # SL remonte a breakeven quand prix atteint +1R
 TRAILING_LOCK_05R_AT = 1.5           # a +1.5R, lock 0.5R de profit
 TRAILING_LOCK_1R_AT = 2.0            # a +2R, lock 1R de profit
@@ -389,8 +392,11 @@ def log_equity(balance: float, equity: float) -> None:
 
 def check_drawdown_24h() -> tuple[bool, float]:
     """
-    Lit l'equity log, calcule le DD% sur 24h.
-    Retourne (ok, dd_pct). ok=False si DD > DRAWDOWN_24H_MAX_PCT.
+    Verifie 3 conditions de pause :
+    1. Drawdown 24h en % > DRAWDOWN_24H_MAX_PCT
+    2. Perte 24h en USD > DAILY_LOSS_USD_MAX
+    3. Equity actuel < MIN_EQUITY_USD
+    Retourne (ok, dd_pct).
     """
     if not EQUITY_LOG.exists():
         return True, 0.0
@@ -410,6 +416,17 @@ def check_drawdown_24h() -> tuple[bool, float]:
             last = eq
         if peak is None or last is None:
             return True, 0.0
+
+        # Plancher equity absolu
+        if last < MIN_EQUITY_USD:
+            return False, (last - peak) / peak * 100
+
+        # Perte USD 24h
+        loss_usd = peak - last
+        if loss_usd > DAILY_LOSS_USD_MAX:
+            return False, -loss_usd / peak * 100
+
+        # Drawdown % 24h
         dd = (last - peak) / peak * 100
         return dd >= -DRAWDOWN_24H_MAX_PCT, dd
     except Exception:
