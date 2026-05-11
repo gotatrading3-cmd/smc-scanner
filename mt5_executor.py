@@ -71,8 +71,10 @@ MAX_POSITION_HOURS = 12              # ferme auto une position apres 12h (libere
 # ===== SAFETY HARDCODE - NE PAS DESACTIVER SANS COMPRENDRE =====
 DEMO_ONLY = True
 MAX_LOT = 1.0
-RISK_PCT_PER_TRADE = 0.005  # 0.5% de l'equity max risque par trade (scalping)
-RR_TARGET = 1.5  # Take profit a 1.5x le risque (scalping rapide)
+# Risque absolu en USD (adapte pour petits comptes demo / scalping)
+RISK_USD_TARGET = 3.0       # cible : 3$ de risque par trade
+RISK_USD_MAX = 5.0          # plafond : 5$ max si min lot broker oblige
+RR_TARGET = 1.5             # Take profit a 1.5x le risque
 SYMBOL_WHITELIST = {
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
@@ -596,33 +598,34 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         risk = sl_adjusted - price
         tp_adjusted = price - RR_TARGET * risk
 
-    # === RISK-BASED LOT SIZING ===
-    # Calcule le lot pour risquer exactement RISK_PCT_PER_TRADE de l'equity.
-    # Si le lot minimum du broker dépasse ce budget -> REFUSE le trade.
-    acc = mt5.account_info()
-    equity = acc.equity if acc else 0
-    risk_budget = equity * RISK_PCT_PER_TRADE  # USD a risquer max
-
-    sl_distance_price = abs(price - sl_adjusted)  # distance prix en unites
-    # Risque par 1.0 lot = sl_distance * contract_size (en devise du compte)
-    risk_per_lot = sl_distance_price * info.trade_contract_size
+    # === RISK-BASED LOT SIZING (en USD absolu, scalping) ===
+    # Cible : RISK_USD_TARGET ($) de risque exact.
+    # Si lot min broker oblige a risquer plus -> accepte jusqu'a RISK_USD_MAX.
+    # Au-dela -> skip.
+    sl_distance_price = abs(price - sl_adjusted)
+    risk_per_lot = sl_distance_price * info.trade_contract_size  # $/lot
     if risk_per_lot <= 0:
         log(f"[ORDER] {mt5_symbol} : risk_per_lot nul, refus")
         return False
 
-    lot_target = risk_budget / risk_per_lot
-    # Arrondi au volume_step inferieur (jamais au-dessus du budget)
+    # Tente d'atteindre le risque cible
+    lot_target = RISK_USD_TARGET / risk_per_lot
     step = info.volume_step if info.volume_step > 0 else 0.01
     lot = (lot_target // step) * step
     lot = round(lot, 2)
 
+    # Si lot calcule < min broker, on tente le min lot si risque <= MAX
     if lot < info.volume_min:
         risk_at_min = info.volume_min * risk_per_lot
-        log(f"[SKIP] {mt5_symbol} {setup.direction} : "
-            f"lot minimum broker {info.volume_min} risquerait {risk_at_min:.2f}$ "
-            f"({risk_at_min/equity*100:.1f}% du compte) vs budget {risk_budget:.2f}$ "
-            f"({RISK_PCT_PER_TRADE*100:.0f}%). Capital insuffisant pour ce symbole.")
-        return False
+        if risk_at_min <= RISK_USD_MAX:
+            lot = info.volume_min
+            log(f"[SIZING] {mt5_symbol} : lot ajuste au min broker {lot} "
+                f"(risque {risk_at_min:.2f}$, sous le plafond {RISK_USD_MAX}$)")
+        else:
+            log(f"[SKIP] {mt5_symbol} {setup.direction} : "
+                f"lot min broker {info.volume_min} risquerait {risk_at_min:.2f}$ "
+                f"> plafond {RISK_USD_MAX}$. Trop cher pour cet actif.")
+            return False
     if lot > MAX_LOT:
         lot = MAX_LOT
 
@@ -652,8 +655,10 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         return True
 
     actual_risk = lot * risk_per_lot
+    acc = mt5.account_info()
+    eq = acc.equity if acc else 1
     log(f"[ORDER] Envoi : {mt5_symbol} {setup.direction} lot={lot} "
-        f"risque={actual_risk:.2f}$ ({actual_risk/equity*100:.2f}% equity) "
+        f"risque={actual_risk:.2f}$ ({actual_risk/eq*100:.1f}% equity) "
         f"price={price:.{digits}f} spread={spread:.{digits}f} "
         f"SL={sl_adjusted:.{digits}f} TP={tp_adjusted:.{digits}f} R:R=1:{RR_TARGET}")
     result = mt5.order_send(request)
