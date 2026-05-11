@@ -74,7 +74,7 @@ MAX_LOT = 1.0
 # Risque absolu en USD (adapte pour petits comptes demo / scalping)
 RISK_USD_TARGET = 3.0       # cible : 3$ de risque par trade
 RISK_USD_MAX = 5.0          # plafond : 5$ max si min lot broker oblige
-RR_TARGET = 1.5             # Take profit a 1.5x le risque
+RR_TARGET = 1.0             # Take profit a 1x le risque (scalp tres court)
 SYMBOL_WHITELIST = {
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
