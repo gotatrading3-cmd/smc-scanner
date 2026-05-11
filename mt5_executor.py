@@ -74,7 +74,9 @@ MAX_LOT = 1.0
 # Risque absolu en USD (adapte pour petits comptes demo / scalping)
 RISK_USD_TARGET = 3.0       # cible : 3$ de risque par trade
 RISK_USD_MAX = 5.0          # plafond : 5$ max si min lot broker oblige
-PROFIT_USD_TARGET = 4.0     # cible profit : ferme quand PnL atteint 4$ (entre 3$ et 5$)
+PROFIT_USD_TARGET = 4.0     # TP place a +4$ (cas ou early close ne se declenche pas)
+EARLY_CLOSE_USD = 2.0       # ferme la position des que profit >= 2$ (scalp ultra court)
+PROFIT_USD_HARD_MAX = 5.0   # ferme force si profit atteint 5$ (locker tout)
 RR_TARGET = 1.0             # fallback si calcul $ impossible
 SYMBOL_WHITELIST = {
     # Crypto
@@ -485,6 +487,17 @@ def manage_open_positions() -> None:
         if info is None or tick is None:
             continue
         digits = info.digits
+
+        # 0) EARLY CLOSE : ferme des que profit atteint EARLY_CLOSE_USD ($2 par defaut)
+        #    Libere le capital + slot pour le prochain signal sur une autre paire.
+        if pos.profit >= EARLY_CLOSE_USD:
+            _close_position(pos, f"early take {pos.profit:.2f}$ >= {EARLY_CLOSE_USD}$")
+            continue
+
+        # 0b) HARD MAX : ferme force si jamais profit a depasse l'attendu (gap, spike)
+        if pos.profit >= PROFIT_USD_HARD_MAX:
+            _close_position(pos, f"hard max {pos.profit:.2f}$")
+            continue
 
         # 1) Sortie temporelle (scalping = on ne reste pas trop longtemps)
         position_age = datetime.now() - datetime.fromtimestamp(pos.time)
