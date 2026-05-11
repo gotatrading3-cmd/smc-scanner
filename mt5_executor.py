@@ -74,7 +74,8 @@ MAX_LOT = 1.0
 # Risque absolu en USD (adapte pour petits comptes demo / scalping)
 RISK_USD_TARGET = 3.0       # cible : 3$ de risque par trade
 RISK_USD_MAX = 5.0          # plafond : 5$ max si min lot broker oblige
-RR_TARGET = 1.0             # Take profit a 1x le risque (scalp tres court)
+PROFIT_USD_TARGET = 4.0     # cible profit : ferme quand PnL atteint 4$ (entre 3$ et 5$)
+RR_TARGET = 1.0             # fallback si calcul $ impossible
 SYMBOL_WHITELIST = {
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
@@ -629,6 +630,16 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
     if lot > MAX_LOT:
         lot = MAX_LOT
 
+    # === TP en USD absolu (au lieu de R:R) ===
+    # Calcul : distance prix pour que lot * distance * contract = PROFIT_USD_TARGET
+    profit_unit = lot * info.trade_contract_size  # $ par unite de prix
+    if profit_unit > 0:
+        tp_distance_price = PROFIT_USD_TARGET / profit_unit
+        if is_long:
+            tp_adjusted = price + tp_distance_price
+        else:
+            tp_adjusted = price - tp_distance_price
+
     # Round SL/TP au tick size
     digits = info.digits
 
@@ -655,12 +666,11 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         return True
 
     actual_risk = lot * risk_per_lot
-    acc = mt5.account_info()
-    eq = acc.equity if acc else 1
+    actual_profit = lot * info.trade_contract_size * abs(tp_adjusted - price)
     log(f"[ORDER] Envoi : {mt5_symbol} {setup.direction} lot={lot} "
-        f"risque={actual_risk:.2f}$ ({actual_risk/eq*100:.1f}% equity) "
+        f"risque={actual_risk:.2f}$  profit_cible={actual_profit:.2f}$ "
         f"price={price:.{digits}f} spread={spread:.{digits}f} "
-        f"SL={sl_adjusted:.{digits}f} TP={tp_adjusted:.{digits}f} R:R=1:{RR_TARGET}")
+        f"SL={sl_adjusted:.{digits}f} TP={tp_adjusted:.{digits}f}")
     result = mt5.order_send(request)
     if result is None:
         log(f"[ORDER] Echec : last_error={mt5.last_error()}")
