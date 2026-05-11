@@ -265,6 +265,22 @@ def safety_pre_check(cfg: dict) -> bool:
     return True
 
 
+def get_recent_consecutive_losses(mt5_symbol: str, lookback_hours: int = 24) -> int:
+    """Compte les pertes consecutives sur ce symbole. 0 si dernier trade = win."""
+    since = datetime.now() - timedelta(hours=lookback_hours)
+    deals = mt5.history_deals_get(since, datetime.now()) or []
+    sym_deals = [d for d in deals if d.symbol == mt5_symbol and d.entry == mt5.DEAL_ENTRY_OUT]
+    sym_deals.sort(key=lambda d: d.time, reverse=True)  # plus recent d'abord
+    consec = 0
+    for d in sym_deals:
+        pnl = d.profit + d.swap + d.commission
+        if pnl < 0:
+            consec += 1
+        else:
+            break
+    return consec
+
+
 def safety_check_setup(setup: SetupAlert, cfg: dict) -> tuple[bool, str]:
     """Valide qu'un setup peut etre execute. Retourne (ok, raison_si_non)."""
     if setup.symbol not in SYMBOL_WHITELIST:
@@ -278,22 +294,26 @@ def safety_check_setup(setup: SetupAlert, cfg: dict) -> tuple[bool, str]:
     if info is None:
         return False, f"symbole MT5 {mt5_symbol} introuvable chez le broker"
     if not info.visible:
-        # essaye d'activer
         if not mt5.symbol_select(mt5_symbol, True):
             return False, f"impossible d'activer {mt5_symbol} dans Market Watch"
 
     if setup.sl is None or setup.sl == setup.entry:
         return False, "SL invalide (obligatoire)"
 
-    # check cooldown
+    # Cooldown trade recent sur le meme symbole
     last_ts = read_last_trade_time(setup.symbol)
     if last_ts and (datetime.now() - last_ts) < timedelta(hours=COOLDOWN_HOURS):
-        return False, f"cooldown actif (dernier trade {setup.symbol} il y a < {COOLDOWN_HOURS}h)"
+        return False, f"cooldown actif (dernier trade {setup.symbol} < {COOLDOWN_HOURS}h)"
 
-    # check positions ouvertes
+    # Pas plus d'une position par symbole
     positions = mt5.positions_get(symbol=mt5_symbol)
     if positions and len(positions) > 0:
         return False, f"position deja ouverte sur {mt5_symbol}"
+
+    # PROPRETE : pause symbole apres 2 pertes consecutives (evite revenge trading)
+    consec_losses = get_recent_consecutive_losses(mt5_symbol, lookback_hours=24)
+    if consec_losses >= 2:
+        return False, f"pause {mt5_symbol} apres {consec_losses} pertes consecutives 24h"
 
     return True, "ok"
 
