@@ -91,7 +91,7 @@ SYMBOL_WHITELIST = {
     "USOIL", "NATGAS",
 }
 COOLDOWN_HOURS = 1  # scalping : cooldown court
-SCAN_INTERVAL_MIN = 5  # scan toutes les 5 min
+SCAN_INTERVAL_MIN = 2  # scan toutes les 2 min (reactivite max)
 DEFAULT_SYMBOLS = [
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
