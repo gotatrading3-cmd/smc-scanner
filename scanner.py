@@ -115,8 +115,9 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
         near_poc = abs(level - vp.poc) / vp.poc < 0.02
         return in_va or near_poc
 
-    # LONG : trend up + retest OB ou FVG + RSI 35-55 + BoS bull recent
-    if price > last["ema200"] and 35 < last["rsi14"] < 55 and recent_bull_bos:
+    # LONG : trend up + retest OB ou FVG + RSI 25-60 (relaxe pour plus de signaux)
+    # BoS recent supprime pour augmenter la frequence
+    if price > last["ema200"] and 25 < last["rsi14"] < 60:
         # essai OB d'abord
         for ob in obs:
             if ob.direction == "bull" and not ob.mitigated:
@@ -149,8 +150,8 @@ def detect_setup(symbol: str, df: pd.DataFrame) -> Optional[SetupAlert]:
                                 distance_to_ema200_pct=(price - last["ema200"]) / last["ema200"] * 100,
                             )
 
-    # SHORT : symetrique
-    if price < last["ema200"] and 45 < last["rsi14"] < 65 and recent_bear_bos:
+    # SHORT : symetrique, relaxe pour plus de signaux
+    if price < last["ema200"] and 40 < last["rsi14"] < 75:
         for ob in obs:
             if ob.direction == "bear" and not ob.mitigated:
                 if bar_high >= ob.bottom and bar_low <= ob.top:
