@@ -64,6 +64,9 @@ PAUSE_FILE = Path(__file__).parent / ".pause"
 SKIP_WEEKEND_FOR_NON_CRYPTO = True   # vendredi 20h UTC -> lundi 00h UTC
 DRAWDOWN_24H_MAX_PCT = 3.0           # circuit breaker si -3% en 24h
 TRAILING_TO_BE_AT_R = 1.0            # SL remonte a breakeven quand prix atteint +1R
+TRAILING_LOCK_05R_AT = 1.5           # a +1.5R, lock 0.5R de profit
+TRAILING_LOCK_1R_AT = 2.0            # a +2R, lock 1R de profit
+MAX_POSITION_HOURS = 12              # ferme auto une position apres 12h (libere le capital)
 
 # ===== SAFETY HARDCODE - NE PAS DESACTIVER SANS COMPRENDRE =====
 DEMO_ONLY = True
@@ -421,11 +424,51 @@ def pause_trading(reason: str) -> None:
 #               TRAILING STOP - BREAKEVEN
 # ============================================================
 
+def _close_position(pos, reason: str) -> bool:
+    info = mt5.symbol_info(pos.symbol)
+    tick = mt5.symbol_info_tick(pos.symbol)
+    if info is None or tick is None:
+        return False
+    req = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "position": pos.ticket,
+        "symbol": pos.symbol,
+        "volume": pos.volume,
+        "type": mt5.ORDER_TYPE_SELL if pos.type == 0 else mt5.ORDER_TYPE_BUY,
+        "price": tick.bid if pos.type == 0 else tick.ask,
+        "deviation": 50,
+        "magic": 20260508,
+        "comment": f"auto close: {reason}",
+        "type_filling": mt5.ORDER_FILLING_IOC,
+    }
+    r = mt5.order_send(req)
+    if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+        log(f"[CLOSE] {pos.symbol} #{pos.ticket} ferme ({reason}) PnL={pos.profit:+.2f}")
+        return True
+    log(f"[CLOSE] {pos.symbol} #{pos.ticket} echec close: {r.retcode if r else 'n/a'}")
+    return False
+
+
+def _move_sl(pos, new_sl: float, digits: int, label: str) -> bool:
+    req = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "position": pos.ticket,
+        "sl": round(new_sl, digits),
+        "tp": pos.tp,
+        "symbol": pos.symbol,
+    }
+    r = mt5.order_send(req)
+    if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+        log(f"[TRAILING] {pos.symbol} #{pos.ticket} SL -> {new_sl:.{digits}f} ({label})")
+        return True
+    return False
+
+
 def manage_open_positions() -> None:
     """
-    Pour chaque position ouverte, si le prix a atteint +1R (= autant que le risque),
-    remonte le SL au prix d'entree (breakeven). Aucune position ne peut plus perdre
-    apres cela.
+    Gestion auto des positions ouvertes :
+    - Sortie temporelle si > MAX_POSITION_HOURS (libere le capital)
+    - Trailing SL progressif a +1R / +1.5R / +2R pour verrouiller les profits
     """
     positions = mt5.positions_get()
     if not positions:
@@ -435,48 +478,51 @@ def manage_open_positions() -> None:
         if pos.sl == 0:
             continue
         info = mt5.symbol_info(pos.symbol)
-        if info is None:
-            continue
         tick = mt5.symbol_info_tick(pos.symbol)
-        if tick is None:
+        if info is None or tick is None:
             continue
         digits = info.digits
 
-        if pos.type == 0:  # BUY / LONG
+        # 1) Sortie temporelle (scalping = on ne reste pas trop longtemps)
+        position_age = datetime.now() - datetime.fromtimestamp(pos.time)
+        if position_age > timedelta(hours=MAX_POSITION_HOURS):
+            _close_position(pos, f"age > {MAX_POSITION_HOURS}h")
+            continue
+
+        # 2) Trailing progressif (profits maximises par paliers)
+        is_long = (pos.type == 0)
+        if is_long:
             risk = pos.price_open - pos.sl
-            if risk <= 0:
-                continue
-            target_be = pos.price_open + TRAILING_TO_BE_AT_R * risk
             current = tick.bid
-            if current >= target_be and pos.sl < pos.price_open:
-                # remonte SL au prix d'entree
-                req = {
-                    "action": mt5.TRADE_ACTION_SLTP,
-                    "position": pos.ticket,
-                    "sl": round(pos.price_open, digits),
-                    "tp": pos.tp,
-                    "symbol": pos.symbol,
-                }
-                r = mt5.order_send(req)
-                if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
-                    log(f"[TRAILING] {pos.symbol} #{pos.ticket} SL -> BE ({pos.price_open})")
-        else:  # SELL / SHORT
+        else:
             risk = pos.sl - pos.price_open
-            if risk <= 0:
-                continue
-            target_be = pos.price_open - TRAILING_TO_BE_AT_R * risk
             current = tick.ask
-            if current <= target_be and pos.sl > pos.price_open:
-                req = {
-                    "action": mt5.TRADE_ACTION_SLTP,
-                    "position": pos.ticket,
-                    "sl": round(pos.price_open, digits),
-                    "tp": pos.tp,
-                    "symbol": pos.symbol,
-                }
-                r = mt5.order_send(req)
-                if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
-                    log(f"[TRAILING] {pos.symbol} #{pos.ticket} SL -> BE ({pos.price_open})")
+        if risk <= 0:
+            continue
+
+        # progression actuelle en R (1R = autant que le risque initial)
+        if is_long:
+            progress_r = (current - pos.price_open) / abs(pos.price_open - max(pos.sl, pos.price_open - risk * 10))
+            progress_r = (current - pos.price_open) / risk
+        else:
+            progress_r = (pos.price_open - current) / risk
+
+        # Niveaux de trailing (par ordre croissant pour appliquer le plus haut atteint)
+        if progress_r >= TRAILING_LOCK_1R_AT:
+            # Lock 1R de profit
+            target_sl = pos.price_open + risk if is_long else pos.price_open - risk
+            if (is_long and pos.sl < target_sl - 1e-9) or (not is_long and pos.sl > target_sl + 1e-9):
+                _move_sl(pos, target_sl, digits, f"lock +1R a +{progress_r:.1f}R")
+        elif progress_r >= TRAILING_LOCK_05R_AT:
+            # Lock 0.5R de profit
+            target_sl = pos.price_open + 0.5 * risk if is_long else pos.price_open - 0.5 * risk
+            if (is_long and pos.sl < target_sl - 1e-9) or (not is_long and pos.sl > target_sl + 1e-9):
+                _move_sl(pos, target_sl, digits, f"lock +0.5R a +{progress_r:.1f}R")
+        elif progress_r >= TRAILING_TO_BE_AT_R:
+            # Breakeven
+            target_sl = pos.price_open
+            if (is_long and pos.sl < target_sl - 1e-9) or (not is_long and pos.sl > target_sl + 1e-9):
+                _move_sl(pos, target_sl, digits, f"BE a +{progress_r:.1f}R")
 
 
 # ============================================================
