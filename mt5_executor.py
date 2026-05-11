@@ -74,9 +74,9 @@ MAX_LOT = 1.0
 # Risque absolu en USD (adapte pour petits comptes demo / scalping)
 RISK_USD_TARGET = 3.0       # cible : 3$ de risque par trade
 RISK_USD_MAX = 5.0          # plafond : 5$ max si min lot broker oblige
-PROFIT_USD_TARGET = 4.0     # TP place a +4$ (cas ou early close ne se declenche pas)
-EARLY_CLOSE_USD = 2.0       # ferme la position des que profit >= 2$ (scalp ultra court)
-PROFIT_USD_HARD_MAX = 5.0   # ferme force si profit atteint 5$ (locker tout)
+PROFIT_USD_TARGET = 5.0     # TP place a +5$ (haut de la fourchette)
+EARLY_CLOSE_USD = 3.0       # ferme la position des que profit >= 3$ (bas de la fourchette)
+PROFIT_USD_HARD_MAX = 5.0   # filet de securite si spike au-dela du TP
 RR_TARGET = 1.0             # fallback si calcul $ impossible
 SYMBOL_WHITELIST = {
     # Crypto
