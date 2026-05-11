@@ -10,8 +10,13 @@ from __future__ import annotations
 import sys
 import os
 import json
+import io
 from pathlib import Path
 from datetime import datetime, timedelta
+
+# Force stdout en UTF-8 pour eviter UnicodeEncodeError sur Windows cp1252
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 # user site-packages
 for _c in [

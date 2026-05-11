@@ -67,7 +67,8 @@ TRAILING_TO_BE_AT_R = 1.0            # SL remonte a breakeven quand prix atteint
 
 # ===== SAFETY HARDCODE - NE PAS DESACTIVER SANS COMPRENDRE =====
 DEMO_ONLY = True
-MAX_LOT = 0.01
+MAX_LOT = 1.0  # plafond absolu, mais le lot reel est calcule via RISK_PCT_PER_TRADE
+RISK_PCT_PER_TRADE = 0.01  # 1% de l'equity max risque par trade
 SYMBOL_WHITELIST = {
     # Crypto
     "BTC/USDT", "ETH/USDT", "SOL/USDT", "AVAX/USDT", "LINK/USDT",
@@ -511,12 +512,6 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
     price = tick.ask if is_long else tick.bid
     spread = tick.ask - tick.bid
 
-    # Lot : on prend le minimum du broker pour ce symbole (varie selon CFD).
-    lot = max(MAX_LOT, info.volume_min)
-    if info.volume_step > 0:
-        lot = round(lot / info.volume_step) * info.volume_step
-    lot = max(lot, info.volume_min)
-
     # === SPREAD COMPENSATION + R:R 1:2 ===
     # Le SL signal est calcule "pure" par le scanner (sans tenir compte du spread).
     # Sur MT5 le SL est verifie sur le bid (pour LONG) ou l'ask (pour SHORT).
@@ -533,6 +528,36 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
         sl_adjusted = setup.sl + spread_buffer
         risk = sl_adjusted - price
         tp_adjusted = price - 2.0 * risk
+
+    # === RISK-BASED LOT SIZING ===
+    # Calcule le lot pour risquer exactement RISK_PCT_PER_TRADE de l'equity.
+    # Si le lot minimum du broker dépasse ce budget -> REFUSE le trade.
+    acc = mt5.account_info()
+    equity = acc.equity if acc else 0
+    risk_budget = equity * RISK_PCT_PER_TRADE  # USD a risquer max
+
+    sl_distance_price = abs(price - sl_adjusted)  # distance prix en unites
+    # Risque par 1.0 lot = sl_distance * contract_size (en devise du compte)
+    risk_per_lot = sl_distance_price * info.trade_contract_size
+    if risk_per_lot <= 0:
+        log(f"[ORDER] {mt5_symbol} : risk_per_lot nul, refus")
+        return False
+
+    lot_target = risk_budget / risk_per_lot
+    # Arrondi au volume_step inferieur (jamais au-dessus du budget)
+    step = info.volume_step if info.volume_step > 0 else 0.01
+    lot = (lot_target // step) * step
+    lot = round(lot, 2)
+
+    if lot < info.volume_min:
+        risk_at_min = info.volume_min * risk_per_lot
+        log(f"[SKIP] {mt5_symbol} {setup.direction} : "
+            f"lot minimum broker {info.volume_min} risquerait {risk_at_min:.2f}$ "
+            f"({risk_at_min/equity*100:.1f}% du compte) vs budget {risk_budget:.2f}$ "
+            f"({RISK_PCT_PER_TRADE*100:.0f}%). Capital insuffisant pour ce symbole.")
+        return False
+    if lot > MAX_LOT:
+        lot = MAX_LOT
 
     # Round SL/TP au tick size
     digits = info.digits
@@ -559,7 +584,9 @@ def place_order(setup: SetupAlert, cfg: dict, dry_run: bool = False) -> bool:
             f"TP={tp_adjusted:.{digits}f} R:R=1:2")
         return True
 
+    actual_risk = lot * risk_per_lot
     log(f"[ORDER] Envoi : {mt5_symbol} {setup.direction} lot={lot} "
+        f"risque={actual_risk:.2f}$ ({actual_risk/equity*100:.2f}% equity) "
         f"price={price:.{digits}f} spread={spread:.{digits}f} "
         f"SL={sl_adjusted:.{digits}f} TP={tp_adjusted:.{digits}f} R:R=1:2")
     result = mt5.order_send(request)
