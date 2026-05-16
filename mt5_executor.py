@@ -33,8 +33,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 
-# Robustesse user site-packages
+# Robustesse user site-packages - chemin absolu en 1er (bulletproof au boot)
 for _candidate in [
+    r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages",
     os.path.expandvars("%APPDATA%\\Python\\Python312\\site-packages"),
     os.path.expanduser("~/AppData/Roaming/Python/Python312/site-packages"),
 ]:

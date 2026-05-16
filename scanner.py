@@ -23,9 +23,10 @@ from __future__ import annotations
 import sys
 import os
 
-# Robustesse Windows : ajoute explicitement le user site-packages
-# au cas ou le contexte (task scheduler, startup) ne l'initialiserait pas.
+# Robustesse Windows : ajoute explicitement le user site-packages.
+# Chemin absolu en 1er (bulletproof si %APPDATA% pas dispo au boot).
 for _candidate in [
+    r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages",
     os.path.expandvars("%APPDATA%\\Python\\Python312\\site-packages"),
     os.path.expanduser("~/AppData/Roaming/Python/Python312/site-packages"),
 ]:

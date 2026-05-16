@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 for _c in [
+    r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages",
     os.path.expandvars("%APPDATA%\\Python\\Python312\\site-packages"),
     os.path.expanduser("~/AppData/Roaming/Python/Python312/site-packages"),
 ]:

@@ -18,8 +18,9 @@ from datetime import datetime, timedelta
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-# user site-packages
+# user site-packages - chemin absolu en 1er (bulletproof au boot)
 for _c in [
+    r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages",
     os.path.expandvars("%APPDATA%\\Python\\Python312\\site-packages"),
     os.path.expanduser("~/AppData/Roaming/Python/Python312/site-packages"),
 ]:

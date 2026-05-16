@@ -31,6 +31,7 @@ from pathlib import Path
 from datetime import datetime
 
 for _c in [
+    r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages",
     os.path.expandvars("%APPDATA%\\Python\\Python312\\site-packages"),
     os.path.expanduser("~/AppData/Roaming/Python/Python312/site-packages"),
 ]:
@@ -49,9 +50,10 @@ CONFIG_FILE = Path(__file__).parent / "mt5_config.json"
 GRID_LOG = Path(__file__).parent / "grid.log"
 
 # ============ PARAMETRES GRID ============
-GRID_SYMBOL_KEY = "XAUUSD"      # cle scanner -> mappe via symbol_map (GOLD chez XM)
+# BTC/USDT car ouvert 24/7 (GOLD ferme le weekend). Step adapte au prix BTC.
+GRID_SYMBOL_KEY = "BTC/USDT"    # cle scanner -> mappe via symbol_map (BTCUSD chez XM)
 GRID_DIRECTION = "BUY"          # BUY only (comme la video) ou "SELL"
-GRID_STEP_USD = 2.0             # ecart de prix (en $) entre 2 niveaux de grille
+GRID_STEP_USD = 50.0            # ecart de prix (en $) entre 2 niveaux - empilement rapide facon video
 GRID_LOT = 0.01                 # lot FIXE par niveau (pas d'exponentiel = moins suicidaire)
 BASKET_TP_USD = 3.0             # ferme tout le panier quand profit cumule >= 3$
 SCAN_SECONDS = 10               # frequence de check
