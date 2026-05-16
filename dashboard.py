@@ -168,6 +168,111 @@ def load_settings() -> dict:
         return {"error": str(e)}
 
 
+def load_saved_accounts() -> list:
+    """Liste tous les comptes sauvegardes (active + autres)."""
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text())
+    except Exception:
+        return []
+    accounts = []
+    # Compte actif au top niveau
+    accounts.append({
+        "login": cfg.get("login"),
+        "server": cfg.get("server"),
+        "label": cfg.get("active_label", f"Compte {cfg.get('login', '?')}"),
+        "type": cfg.get("active_type", "unknown"),
+        "active": True,
+    })
+    # Autres comptes sauvegardes
+    for acc in cfg.get("saved_accounts", []):
+        if acc.get("login") != cfg.get("login"):
+            accounts.append({
+                "login": acc.get("login"),
+                "server": acc.get("server"),
+                "label": acc.get("label", f"Compte {acc.get('login')}"),
+                "type": acc.get("type", "demo"),
+                "active": False,
+            })
+    return accounts
+
+
+def add_account(login: int, password: str, server: str, label: str, account_type: str) -> bool:
+    """Ajoute un compte a la liste saved_accounts."""
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text())
+    except Exception:
+        return False
+    cfg.setdefault("saved_accounts", [])
+    # Verifie pas de doublon
+    for acc in cfg["saved_accounts"]:
+        if acc.get("login") == login:
+            return False
+    cfg["saved_accounts"].append({
+        "login": login, "password": password, "server": server,
+        "label": label, "type": account_type,
+    })
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+    return True
+
+
+def switch_active_account(login: int) -> bool:
+    """Bascule sur un autre compte sauvegarde."""
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text())
+    except Exception:
+        return False
+
+    # Trouve le compte dans saved_accounts
+    target = None
+    for acc in cfg.get("saved_accounts", []):
+        if acc.get("login") == login:
+            target = acc
+            break
+    if not target:
+        return False
+
+    # Sauve l'ancien compte actif dans saved_accounts si pas deja
+    old_login = cfg.get("login")
+    old_in_saved = any(a.get("login") == old_login for a in cfg.get("saved_accounts", []))
+    if old_login and not old_in_saved:
+        cfg["saved_accounts"].append({
+            "login": old_login,
+            "password": cfg.get("password"),
+            "server": cfg.get("server"),
+            "label": cfg.get("active_label", f"Compte {old_login}"),
+            "type": cfg.get("active_type", "demo"),
+        })
+
+    # Active le nouveau
+    cfg["login"] = target["login"]
+    cfg["password"] = target["password"]
+    cfg["server"] = target["server"]
+    cfg["active_label"] = target.get("label", "")
+    cfg["active_type"] = target.get("type", "demo")
+
+    # Retire le nouveau de la liste saved_accounts (il est maintenant actif)
+    cfg["saved_accounts"] = [a for a in cfg.get("saved_accounts", []) if a.get("login") != login]
+
+    CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+    return True
+
+
+def remove_account(login: int) -> bool:
+    """Supprime un compte sauvegarde (pas l'actif)."""
+    try:
+        cfg = json.loads(CONFIG_FILE.read_text())
+    except Exception:
+        return False
+    if cfg.get("login") == login:
+        return False  # ne supprime pas l'actif
+    before = len(cfg.get("saved_accounts", []))
+    cfg["saved_accounts"] = [a for a in cfg.get("saved_accounts", []) if a.get("login") != login]
+    if len(cfg["saved_accounts"]) < before:
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+        return True
+    return False
+
+
 def read_logs(n: int = 30) -> list:
     if not TRADE_LOG.exists():
         return []
@@ -439,6 +544,27 @@ def render_html(data: dict) -> str:
         desc = settings_descriptions.get(k, "")
         settings_rows += f'<tr><td><code>{k}</code></td><td>{desc}</td><td class="settings-val">{v}{unit}</td></tr>'
 
+    # ===== Comptes =====
+    accounts = load_saved_accounts()
+    accounts_rows = ""
+    for acc in accounts:
+        is_real = acc.get("type") == "real"
+        type_badge = '<span class="tag sell">REEL</span>' if is_real else '<span class="tag buy">DEMO</span>'
+        if acc["active"]:
+            action = '<span style="color:#3fb950;font-weight:700;">● ACTIF</span>'
+        else:
+            switch_btn = (f'<form method="POST" action="/accounts/switch" style="margin:0;display:inline">'
+                          f'<input type="hidden" name="login" value="{acc["login"]}"/>'
+                          f'<button type="submit" class="btn-row" style="background:rgba(63,185,80,0.1);color:#3fb950;border-color:rgba(63,185,80,0.3);" '
+                          f'onclick="return confirm(\'Basculer sur le compte {acc["login"]} ? Le bot se reconnectera au prochain scan.\');">Activer</button></form>')
+            rm_btn = (f'<form method="POST" action="/accounts/remove" style="margin:0;display:inline;margin-left:6px">'
+                      f'<input type="hidden" name="login" value="{acc["login"]}"/>'
+                      f'<button type="submit" class="btn-row" onclick="return confirm(\'Supprimer ce compte de la liste ?\');">✕</button></form>')
+            action = switch_btn + rm_btn
+        accounts_rows += (f'<tr><td><b>{html.escape(str(acc["label"]))}</b></td>'
+                          f'<td>{acc["login"]}</td><td>{html.escape(str(acc["server"]))}</td>'
+                          f'<td>{type_badge}</td><td>{action}</td></tr>')
+
     return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -667,6 +793,22 @@ tr:hover td {{ background: rgba(251, 191, 36, 0.03); }}
 
 .settings-val {{ font-family: "JetBrains Mono", monospace; color: #fbbf24; font-weight: 700; }}
 
+/* ===== FORM INPUTS ===== */
+.acc-input {{
+  width: 100%;
+  padding: 9px 12px;
+  background: #0a0e15;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  font-size: 13px;
+  font-family: inherit;
+  transition: border 0.15s;
+}}
+.acc-input:focus {{ outline: none; border-color: #fbbf24; box-shadow: 0 0 0 2px rgba(251,191,36,0.1); }}
+.acc-input::placeholder {{ color: #4d5560; }}
+select.acc-input {{ cursor: pointer; }}
+
 .footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid #21262d; color: #6e7681; font-size: 11px; text-align: center; }}
 .footer b {{ color: #fbbf24; }}
 
@@ -700,6 +842,7 @@ tr:hover td {{ background: rgba(251, 191, 36, 0.03); }}
     <a href="#sessions"><span class="icon">🌍</span> Sessions</a>
     <a href="#news"><span class="icon">📰</span> News marche</a>
     <a href="#history"><span class="icon">📋</span> Historique</a>
+    <a href="#accounts"><span class="icon">👤</span> Comptes</a>
     <a href="#settings"><span class="icon">⚙️</span> Parametres</a>
     <a href="#logs"><span class="icon">📃</span> Logs</a>
   </nav>
@@ -808,6 +951,52 @@ tr:hover td {{ background: rgba(251, 191, 36, 0.03); }}
     <div class="chips">{sym_chips}</div>
   </section>
 
+  <section id="accounts" class="section">
+    <h3>👤 Gestion des comptes</h3>
+    <table>
+      <tr><th>Nom</th><th>Login</th><th>Serveur</th><th>Type</th><th>Action</th></tr>
+      {accounts_rows}
+    </table>
+
+    <div style="margin-top:18px;background:linear-gradient(135deg,#161b22,#13181f);border:1px solid #30363d;border-radius:12px;padding:18px;">
+      <div style="color:#fbbf24;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;">➕ Ajouter un compte</div>
+      <form method="POST" action="/accounts/add">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+          <div>
+            <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">Nom du compte</label>
+            <input name="label" placeholder="ex: Demo XM 2" required class="acc-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">Type</label>
+            <select name="type" class="acc-input">
+              <option value="demo">DEMO (recommande)</option>
+              <option value="real">REEL</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">Login (numero)</label>
+            <input name="login" type="number" placeholder="ex: 334579660" required class="acc-input"/>
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">Serveur</label>
+            <input name="server" placeholder="ex: XMGlobal-MT5 9" required class="acc-input"/>
+          </div>
+          <div style="grid-column:1/3;">
+            <label style="display:block;font-size:11px;color:#8b949e;margin-bottom:4px;">Mot de passe</label>
+            <input name="password" type="password" placeholder="mot de passe MT5" required class="acc-input"/>
+          </div>
+        </div>
+        <button type="submit" class="btn">💾 Enregistrer le compte</button>
+      </form>
+      <div style="margin-top:14px;padding:12px;background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.25);border-radius:8px;font-size:11px;color:#f0a0a0;">
+        <b>⚠️ Securite compte REEL :</b> meme si tu ajoutes un compte reel et l'actives, le bot
+        <b>refuse de trader dessus</b> tant que <code>DEMO_ONLY = True</code> est present dans
+        <code>mt5_executor.py</code>. Ce flag est volontairement non-modifiable depuis l'interface.
+        Pour autoriser le trading reel, tu dois editer le code toi-meme, en pleine conscience du risque.
+      </div>
+    </div>
+  </section>
+
   <section id="settings" class="section">
     <h3>⚙️ Parametres du bot</h3>
     <table>
@@ -886,6 +1075,31 @@ class Handler(BaseHTTPRequestHandler):
                     self._close_position(int(ticket))
                 except Exception as e:
                     print(f"Close error: {e}")
+        elif path == "/accounts/add":
+            try:
+                login = int(params.get("login", ["0"])[0])
+                password = params.get("password", [""])[0]
+                server = params.get("server", [""])[0].strip()
+                label = params.get("label", [""])[0].strip() or f"Compte {login}"
+                acc_type = params.get("type", ["demo"])[0]
+                if login and password and server:
+                    add_account(login, password, server, label, acc_type)
+            except Exception as e:
+                print(f"Add account error: {e}")
+        elif path == "/accounts/switch":
+            try:
+                login = int(params.get("login", ["0"])[0])
+                if login:
+                    switch_active_account(login)
+            except Exception as e:
+                print(f"Switch error: {e}")
+        elif path == "/accounts/remove":
+            try:
+                login = int(params.get("login", ["0"])[0])
+                if login:
+                    remove_account(login)
+            except Exception as e:
+                print(f"Remove error: {e}")
         self.send_response(303)
         self.send_header("Location", "/")
         self.end_headers()
