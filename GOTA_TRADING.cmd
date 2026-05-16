@@ -1,8 +1,23 @@
 @echo off
-REM Lance l'application GOTA TRADING (fenetre native)
+REM ============================================================
+REM  GOTA TRADING - Lanceur de l'application
+REM  Ouvre le tableau de bord en fenetre "app" via Edge.
+REM  Fiable : si le dashboard ne tourne pas, il le demarre.
+REM ============================================================
 set "DIR=C:\Users\GOTA TRADING\.claude\trading-analysis"
-set "PYTHON=C:\Users\GOTA TRADING\AppData\Local\Programs\Python\Python312\pythonw.exe"
-set "PYTHONPATH=C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages"
-set "PYTHONIOENCODING=utf-8"
-cd /d "%DIR%"
-start "" "%PYTHON%" "%DIR%\gota_trading_app.py"
+
+REM --- 1. Le dashboard repond-il deja sur le port 8080 ? ---
+curl -s -o NUL --max-time 8 http://localhost:8080/
+if errorlevel 1 (
+    REM Dashboard non actif -> on le lance
+    start "" /min cmd /c "%DIR%\run_dashboard.cmd"
+    REM Laisse le temps au serveur de demarrer
+    timeout /t 9 /nobreak >NUL
+)
+
+REM --- 2. Ouvre le tableau de bord en fenetre application ---
+REM Mode --app : fenetre propre, sans onglets ni barre d'adresse.
+start msedge --app=http://localhost:8080 --window-size=1340,880
+
+REM Si Edge absent, fallback navigateur par defaut
+if errorlevel 1 start http://localhost:8080

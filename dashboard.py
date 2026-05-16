@@ -7,9 +7,11 @@ import sys
 import os
 import json
 import html
+import time
+import threading
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 for _c in [
@@ -26,6 +28,29 @@ from market_data import (  # noqa: E402
     get_sessions_status, format_age,
 )
 
+# ===== CACHE MARCHE EN ARRIERE-PLAN =====
+# Les news/FNG sont lents (HTTP externe). On les rafraichit dans un thread
+# de fond pour que le rendu de la page reste INSTANTANE.
+_MARKET_CACHE = {"news_crypto": [], "news_finance": [], "fng": None, "updated": 0.0}
+_MARKET_LOCK = threading.Lock()
+
+
+def _market_updater():
+    """Thread de fond : rafraichit news + FNG toutes les 10 min."""
+    while True:
+        try:
+            nc = get_crypto_news(8)
+            nf = get_finance_news(4)
+            fng = get_fear_greed()
+            with _MARKET_LOCK:
+                _MARKET_CACHE["news_crypto"] = nc
+                _MARKET_CACHE["news_finance"] = nf
+                _MARKET_CACHE["fng"] = fng
+                _MARKET_CACHE["updated"] = time.time()
+        except Exception as e:
+            print(f"[market updater] erreur : {e}")
+        time.sleep(600)
+
 DIR = Path(__file__).parent
 CONFIG_FILE = DIR / "mt5_config.json"
 TRADE_LOG = DIR / "mt5_trades.log"
@@ -35,7 +60,32 @@ PORT = 8080
 APP_VERSION = "2.0"
 
 
+# Cache des donnees completes (MT5 + marche) - rendu page instantane
+_DATA_CACHE = {"data": None, "updated": 0.0}
+_DATA_LOCK = threading.Lock()
+
+
 def fetch_data():
+    """Retourne les donnees depuis le cache (instantane). Le cache est
+    rafraichi par un thread de fond toutes les ~8s."""
+    with _DATA_LOCK:
+        return _DATA_CACHE["data"]
+
+
+def _data_updater():
+    """Thread de fond : rafraichit toutes les donnees du dashboard."""
+    while True:
+        try:
+            d = _fetch_data_live()
+            with _DATA_LOCK:
+                _DATA_CACHE["data"] = d
+                _DATA_CACHE["updated"] = time.time()
+        except Exception as e:
+            print(f"[data updater] erreur : {e}")
+        time.sleep(8)
+
+
+def _fetch_data_live():
     cfg = json.loads(CONFIG_FILE.read_text())
     if not mt5.initialize(login=cfg["login"], password=cfg["password"], server=cfg["server"]):
         return None
@@ -138,10 +188,11 @@ def fetch_data():
             "paused": PAUSE_FILE.exists(),
             "equity_history": eq_history,
             "settings": load_settings(),
-            "news_crypto": get_crypto_news(8),
-            "news_finance": get_finance_news(4),
-            "fng": get_fear_greed(),
-            "sessions": get_sessions_status(),
+            # News/FNG lus depuis le cache de fond (instantane)
+            "news_crypto": _MARKET_CACHE["news_crypto"],
+            "news_finance": _MARKET_CACHE["news_finance"],
+            "fng": _MARKET_CACHE["fng"],
+            "sessions": get_sessions_status(),  # local, rapide
         }
     finally:
         mt5.shutdown()
@@ -1132,7 +1183,21 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = HTTPServer(("127.0.0.1", PORT), Handler)
+    # Threads de fond : news/FNG + donnees MT5 (rendu page instantane)
+    threading.Thread(target=_market_updater, daemon=True).start()
+    threading.Thread(target=_data_updater, daemon=True).start()
+
+    # Premier fetch synchrone pour que la page soit prete des le 1er affichage
+    print("GOTA TRADING Dashboard - chargement initial...")
+    try:
+        d = _fetch_data_live()
+        with _DATA_LOCK:
+            _DATA_CACHE["data"] = d
+            _DATA_CACHE["updated"] = time.time()
+    except Exception as e:
+        print(f"  warn chargement initial : {e}")
+
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     print(f"GOTA TRADING Dashboard v{APP_VERSION} : http://localhost:{PORT}")
     try:
         server.serve_forever()
