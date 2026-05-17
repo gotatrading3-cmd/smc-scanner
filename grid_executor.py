@@ -49,20 +49,20 @@ except Exception:
 CONFIG_FILE = Path(__file__).parent / "mt5_config.json"
 GRID_LOG = Path(__file__).parent / "grid.log"
 
-# ============ PARAMETRES GRID ============
+# ============ PARAMETRES GRID (configure pour demo $1000) ============
 # BTC/USDT car ouvert 24/7 (GOLD ferme le weekend). Step adapte au prix BTC.
 GRID_SYMBOL_KEY = "BTC/USDT"    # cle scanner -> mappe via symbol_map (BTCUSD chez XM)
 GRID_DIRECTION = "BUY"          # BUY only (comme la video) ou "SELL"
-GRID_STEP_USD = 50.0            # ecart de prix (en $) entre 2 niveaux - empilement rapide facon video
-GRID_LOT = 0.01                 # lot FIXE par niveau (pas d'exponentiel = moins suicidaire)
-BASKET_TP_USD = 3.0             # ferme tout le panier quand profit cumule >= 3$
+GRID_STEP_USD = 50.0            # ecart de prix (en $) entre 2 niveaux
+GRID_LOT = 0.03                 # lot FIXE par niveau (pas d'exponentiel - jamais)
+BASKET_TP_USD = 10.0            # ferme tout le panier quand profit cumule >= 10$
 SCAN_SECONDS = 10               # frequence de check
 
 # ============ GARDE-FOUS HARDCODES ============
 DEMO_ONLY = True                # JAMAIS de compte reel
-MAX_POSITIONS = 15              # plafond strict de positions simultanees
-MAX_TOTAL_LOT = 0.20            # lot cumule max (15 x 0.01 = 0.15, marge OK)
-EQUITY_FLOOR_USD = 5.0          # si equity < 5$ -> ferme TOUT le panier (stop loss)
+MAX_POSITIONS = 40              # plafond strict de positions simultanees
+MAX_TOTAL_LOT = 1.5             # lot cumule max (40 x 0.03 = 1.2, marge OK)
+EQUITY_FLOOR_USD = 300.0        # si equity < 300$ -> ferme TOUT le panier (stop loss)
 MAGIC = 20260516                # identifiant des ordres du grid bot
 
 
