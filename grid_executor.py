@@ -127,31 +127,60 @@ def open_grid_position(mt5_symbol: str, grid_lot: float, dry_run: bool) -> bool:
     return True
 
 
+def _pick_filling(mt5_symbol: str):
+    """Choisit le mode de filling supporte par le symbole (evite retcode 10030)."""
+    info = mt5.symbol_info(mt5_symbol)
+    if info is None:
+        return mt5.ORDER_FILLING_IOC
+    fm = info.filling_mode  # bitmask : 1=FOK, 2=IOC
+    if fm & 2:
+        return mt5.ORDER_FILLING_IOC
+    if fm & 1:
+        return mt5.ORDER_FILLING_FOK
+    return mt5.ORDER_FILLING_RETURN
+
+
 def close_basket(mt5_symbol: str, reason: str) -> float:
-    """Ferme toutes les positions du grid. Retourne le PnL total realise."""
+    """Ferme toutes les positions du grid. VERIFIE chaque resultat + retry."""
     positions = get_grid_positions(mt5_symbol)
-    total = 0.0
+    if not positions:
+        return 0.0
+    filling = _pick_filling(mt5_symbol)
+    realized = 0.0
+    closed = 0
     for p in positions:
-        tick = mt5.symbol_info_tick(p.symbol)
-        if tick is None:
-            continue
-        req = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "position": p.ticket,
-            "symbol": p.symbol,
-            "volume": p.volume,
-            "type": mt5.ORDER_TYPE_SELL if p.type == 0 else mt5.ORDER_TYPE_BUY,
-            "price": tick.bid if p.type == 0 else tick.ask,
-            "deviation": 50,
-            "magic": MAGIC,
-            "comment": f"grid close: {reason}",
-            "type_filling": mt5.ORDER_FILLING_IOC,
-        }
-        total += p.profit
-        mt5.order_send(req)
-    if positions:
-        log(f"[GRID] PANIER FERME ({reason}) - {len(positions)} positions - PnL {total:+.2f}$")
-    return total
+        success = False
+        for attempt in range(1, 4):  # 3 tentatives
+            tick = mt5.symbol_info_tick(p.symbol)
+            if tick is None:
+                break
+            req = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "position": p.ticket,
+                "symbol": p.symbol,
+                "volume": p.volume,
+                "type": mt5.ORDER_TYPE_SELL if p.type == 0 else mt5.ORDER_TYPE_BUY,
+                "price": tick.bid if p.type == 0 else tick.ask,
+                "deviation": 2000,  # large : crypto/or bougent vite
+                "magic": MAGIC,
+                "comment": "grid close",
+                "type_filling": filling,
+            }
+            r = mt5.order_send(req)
+            if r is not None and r.retcode == mt5.TRADE_RETCODE_DONE:
+                success = True
+                closed += 1
+                realized += p.profit
+                break
+            else:
+                rc = r.retcode if r else "n/a"
+                cm = r.comment if r else ""
+                log(f"[GRID] close #{p.ticket} tentative {attempt}/3 echec : retcode={rc} {cm}")
+        if not success:
+            log(f"[GRID] close #{p.ticket} ECHEC - position reste ouverte")
+    log(f"[GRID] PANIER {mt5_symbol} : {closed}/{len(positions)} fermees, "
+        f"PnL realise {realized:+.2f}$ ({reason})")
+    return realized
 
 
 def grid_cycle(cfg: dict, dry_run: bool, notifier=None) -> bool:
