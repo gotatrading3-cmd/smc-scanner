@@ -49,20 +49,20 @@ except Exception:
 CONFIG_FILE = Path(__file__).parent / "mt5_config.json"
 GRID_LOG = Path(__file__).parent / "grid.log"
 
-# ============ PARAMETRES GRID (configure pour demo $1000) ============
-# BTC/USDT car ouvert 24/7 (GOLD ferme le weekend). Step adapte au prix BTC.
-GRID_SYMBOL_KEY = "BTC/USDT"    # cle scanner -> mappe via symbol_map (BTCUSD chez XM)
+# ============ PARAMETRES GRID MULTI-SYMBOLES (demo $1000) ============
+# Chaque symbole a son propre panier independant, son step et son lot.
+# step adapte au prix : BTC ~78000$ -> step 50$ ; GOLD ~4500$ -> step 5$.
+GRID_SYMBOLS = {
+    "BTC/USDT": {"step": 50.0, "lot": 0.03, "basket_tp": 10.0},
+    "XAUUSD":   {"step": 5.0,  "lot": 0.01, "basket_tp": 8.0},
+}
 GRID_DIRECTION = "BUY"          # BUY only (comme la video) ou "SELL"
-GRID_STEP_USD = 50.0            # ecart de prix (en $) entre 2 niveaux
-GRID_LOT = 0.03                 # lot FIXE par niveau (pas d'exponentiel - jamais)
-BASKET_TP_USD = 10.0            # ferme tout le panier quand profit cumule >= 10$
 SCAN_SECONDS = 10               # frequence de check
 
 # ============ GARDE-FOUS HARDCODES ============
 DEMO_ONLY = True                # JAMAIS de compte reel
-MAX_POSITIONS = 40              # plafond strict de positions simultanees
-MAX_TOTAL_LOT = 1.5             # lot cumule max (40 x 0.03 = 1.2, marge OK)
-EQUITY_FLOOR_USD = 300.0        # si equity < 300$ -> ferme TOUT le panier (stop loss)
+MAX_POSITIONS_PER_SYMBOL = 20   # plafond strict par symbole (20 BTC + 20 GOLD max)
+EQUITY_FLOOR_USD = 300.0        # si equity < 300$ -> ferme TOUS les paniers (stop loss)
 MAGIC = 20260516                # identifiant des ordres du grid bot
 
 
@@ -90,7 +90,7 @@ def get_grid_positions(mt5_symbol: str) -> list:
     return [p for p in positions if p.magic == MAGIC]
 
 
-def open_grid_position(mt5_symbol: str, dry_run: bool) -> bool:
+def open_grid_position(mt5_symbol: str, grid_lot: float, dry_run: bool) -> bool:
     info = mt5.symbol_info(mt5_symbol)
     tick = mt5.symbol_info_tick(mt5_symbol)
     if info is None or tick is None:
@@ -102,7 +102,7 @@ def open_grid_position(mt5_symbol: str, dry_run: bool) -> bool:
     is_buy = GRID_DIRECTION == "BUY"
     order_type = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
     price = tick.ask if is_buy else tick.bid
-    lot = max(GRID_LOT, info.volume_min)
+    lot = max(grid_lot, info.volume_min)
 
     if dry_run:
         log(f"[DRY-RUN] Ouvrirait {GRID_DIRECTION} {mt5_symbol} lot={lot} @ {price}")
@@ -155,7 +155,7 @@ def close_basket(mt5_symbol: str, reason: str) -> float:
 
 
 def grid_cycle(cfg: dict, dry_run: bool, notifier=None) -> bool:
-    """Un cycle de gestion du grid. Retourne False si on doit arreter."""
+    """Un cycle de gestion du grid multi-symboles. Retourne False si arret."""
     ai = mt5.account_info()
     if ai is None:
         log("[GRID] account_info indisponible")
@@ -166,54 +166,64 @@ def grid_cycle(cfg: dict, dry_run: bool, notifier=None) -> bool:
         log("[GRID] STOP - compte non-demo (DEMO_ONLY=True)")
         return False
 
-    mt5_symbol = cfg.get("symbol_map", {}).get(GRID_SYMBOL_KEY)
-    if not mt5_symbol:
-        log(f"[GRID] STOP - {GRID_SYMBOL_KEY} pas dans symbol_map")
-        return False
+    symbol_map = cfg.get("symbol_map", {})
+    all_grid_pos = [p for p in (mt5.positions_get() or []) if p.magic == MAGIC]
 
-    positions = get_grid_positions(mt5_symbol)
-    n = len(positions)
-    basket_pnl = sum(p.profit for p in positions)
-
-    # GARDE-FOU 2 : equity floor
-    if ai.equity < EQUITY_FLOOR_USD and n > 0:
+    # GARDE-FOU 2 : equity floor GLOBAL -> ferme TOUS les paniers
+    if ai.equity < EQUITY_FLOOR_USD and all_grid_pos:
         log(f"[GRID] EQUITY FLOOR atteint ({ai.equity:.2f}$ < {EQUITY_FLOOR_USD}$)")
-        realized = close_basket(mt5_symbol, "equity floor")
+        total = 0.0
+        for sym_key in GRID_SYMBOLS:
+            ms = symbol_map.get(sym_key)
+            if ms:
+                total += close_basket(ms, "equity floor")
         if notifier:
-            notifier.send(f"🛑 *GRID - Equity Floor*\nPanier ferme a {ai.equity:.2f}$\nPnL: {realized:+.2f}$\n\nC'est exactement le scenario 'ca explose'.")
+            notifier.send(f"🛑 *GRID - Equity Floor*\nTous paniers fermes a {ai.equity:.2f}$\n"
+                          f"PnL: {total:+.2f}$\n\nC'est le scenario 'ca explose'.")
         return False  # on arrete le grid
 
-    log(f"[GRID] equity={ai.equity:.2f}$ positions={n}/{MAX_POSITIONS} basket_pnl={basket_pnl:+.2f}$")
+    log(f"[GRID] equity={ai.equity:.2f}$  total positions grid={len(all_grid_pos)}")
 
-    # TAKE PROFIT du panier
-    if n > 0 and basket_pnl >= BASKET_TP_USD:
-        realized = close_basket(mt5_symbol, f"basket TP {basket_pnl:.2f}$")
-        if notifier:
-            notifier.send(f"🟢 *GRID - Panier gagnant*\n{n} positions fermees\nPnL: {realized:+.2f}$")
-        return True
+    # Gestion independante de chaque symbole
+    for sym_key, params in GRID_SYMBOLS.items():
+        mt5_symbol = symbol_map.get(sym_key)
+        if not mt5_symbol:
+            log(f"[GRID] {sym_key} pas dans symbol_map - skip")
+            continue
 
-    # OUVERTURE premiere position
-    if n == 0:
-        open_grid_position(mt5_symbol, dry_run)
-        return True
+        positions = get_grid_positions(mt5_symbol)
+        n = len(positions)
+        basket_pnl = sum(p.profit for p in positions)
+        log(f"[GRID]   {sym_key}: {n}/{MAX_POSITIONS_PER_SYMBOL} pos, basket {basket_pnl:+.2f}$")
 
-    # AJOUT d'un niveau si le prix a recule de GRID_STEP
-    if n < MAX_POSITIONS:
-        total_lot = sum(p.volume for p in positions)
-        if total_lot + GRID_LOT > MAX_TOTAL_LOT:
-            log(f"[GRID] MAX_TOTAL_LOT atteint ({total_lot})")
-            return True
-        tick = mt5.symbol_info_tick(mt5_symbol)
-        is_buy = GRID_DIRECTION == "BUY"
-        if is_buy:
-            lowest_entry = min(p.price_open for p in positions)
-            if tick.ask <= lowest_entry - GRID_STEP_USD:
-                log(f"[GRID] prix recule de {GRID_STEP_USD}$ -> +1 niveau")
-                open_grid_position(mt5_symbol, dry_run)
-        else:
-            highest_entry = max(p.price_open for p in positions)
-            if tick.bid >= highest_entry + GRID_STEP_USD:
-                open_grid_position(mt5_symbol, dry_run)
+        # TAKE PROFIT du panier de ce symbole
+        if n > 0 and basket_pnl >= params["basket_tp"]:
+            realized = close_basket(mt5_symbol, f"{sym_key} basket TP {basket_pnl:.2f}$")
+            if notifier:
+                notifier.send(f"🟢 *GRID {sym_key} - Panier gagnant*\n"
+                              f"{n} positions fermees\nPnL: {realized:+.2f}$")
+            continue
+
+        # OUVERTURE premiere position
+        if n == 0:
+            open_grid_position(mt5_symbol, params["lot"], dry_run)
+            continue
+
+        # AJOUT d'un niveau si le prix a bouge de step
+        if n < MAX_POSITIONS_PER_SYMBOL:
+            tick = mt5.symbol_info_tick(mt5_symbol)
+            if tick is None:
+                continue
+            is_buy = GRID_DIRECTION == "BUY"
+            if is_buy:
+                lowest_entry = min(p.price_open for p in positions)
+                if tick.ask <= lowest_entry - params["step"]:
+                    log(f"[GRID]   {sym_key} recule de {params['step']}$ -> +1 niveau")
+                    open_grid_position(mt5_symbol, params["lot"], dry_run)
+            else:
+                highest_entry = max(p.price_open for p in positions)
+                if tick.bid >= highest_entry + params["step"]:
+                    open_grid_position(mt5_symbol, params["lot"], dry_run)
     return True
 
 
@@ -222,21 +232,21 @@ def main():
     if "--setup-info" in args:
         print(__doc__)
         print("\nParametres actuels :")
-        print(f"  Symbole       : {GRID_SYMBOL_KEY} ({GRID_DIRECTION})")
-        print(f"  Step grille   : {GRID_STEP_USD}$")
-        print(f"  Lot par niveau: {GRID_LOT} (FIXE)")
-        print(f"  Panier TP     : {BASKET_TP_USD}$")
-        print(f"  Max positions : {MAX_POSITIONS}")
-        print(f"  Equity floor  : {EQUITY_FLOOR_USD}$")
+        print(f"  Direction     : {GRID_DIRECTION}")
+        for sk, pp in GRID_SYMBOLS.items():
+            print(f"  {sk:10s} : step {pp['step']}$  lot {pp['lot']}  panier TP {pp['basket_tp']}$")
+        print(f"  Max pos/symbole: {MAX_POSITIONS_PER_SYMBOL}")
+        print(f"  Equity floor   : {EQUITY_FLOOR_USD}$")
         return
 
     dry_run = "--dry-run" in args
     once = "--once" in args
 
     log("=== GOTA GRID BOT - DEMARRAGE ===")
-    log(f"  DEMO_ONLY={DEMO_ONLY}  dry_run={dry_run}")
-    log(f"  {GRID_SYMBOL_KEY} {GRID_DIRECTION} step={GRID_STEP_USD}$ lot={GRID_LOT}")
-    log(f"  Panier TP={BASKET_TP_USD}$  max_pos={MAX_POSITIONS}  equity_floor={EQUITY_FLOOR_USD}$")
+    log(f"  DEMO_ONLY={DEMO_ONLY}  dry_run={dry_run}  direction={GRID_DIRECTION}")
+    for sk, pp in GRID_SYMBOLS.items():
+        log(f"  {sk}: step={pp['step']}$ lot={pp['lot']} basket_tp={pp['basket_tp']}$")
+    log(f"  max_pos/symbole={MAX_POSITIONS_PER_SYMBOL}  equity_floor={EQUITY_FLOOR_USD}$")
 
     cfg = connect()
     if cfg is None:
