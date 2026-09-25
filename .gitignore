@@ -13,6 +13,26 @@ mt5_trades.log
 
 # Pause flag
 .pause
+.signals_pause
+
+# Depot PUBLIC : rien de personnel ni de sensible ne doit partir sur GitHub
+channel.json
+dashboard_auth.json
+*.url
+cloudflared.exe
+.cache/
+.video_frames/
+_diag_*.txt
+*.pkl
+
+# Systeme de signaux : etat / historique (vivent sur la branche "data"), images, caches, rapports locaux
+signals_state.json
+signals_history.jsonl
+signal_out/
+signal_cache/
+signal_backtest_report*.txt
+signal_backtest_summary*.json
+STRATEGIE_SIGNAUX.md
 
 # Python
 __pycache__/

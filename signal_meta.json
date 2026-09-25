@@ -1,0 +1,146 @@
+{
+ "EURUSD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 19.0,
+  "cls": "fx",
+  "mt5": "EURUSD"
+ },
+ "GBPUSD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 20.0,
+  "cls": "fx",
+  "mt5": "GBPUSD"
+ },
+ "USDJPY": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 100000.0,
+  "spread_pts": 20.0,
+  "cls": "fx",
+  "mt5": "USDJPY"
+ },
+ "AUDUSD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 23.0,
+  "cls": "fx",
+  "mt5": "AUDUSD"
+ },
+ "USDCAD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 26.0,
+  "cls": "fx",
+  "mt5": "USDCAD"
+ },
+ "USDCHF": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 22.0,
+  "cls": "fx",
+  "mt5": "USDCHF"
+ },
+ "NZDUSD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 28.0,
+  "cls": "fx",
+  "mt5": "NZDUSD"
+ },
+ "EURJPY": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 100000.0,
+  "spread_pts": 25.0,
+  "cls": "fx",
+  "mt5": "EURJPY"
+ },
+ "GBPJPY": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 100000.0,
+  "spread_pts": 30.0,
+  "cls": "fx",
+  "mt5": "GBPJPY"
+ },
+ "XAUUSD": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 100.0,
+  "spread_pts": 31.0,
+  "cls": "metal",
+  "mt5": "GOLD"
+ },
+ "XAGUSD": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 5000.0,
+  "spread_pts": 33.0,
+  "cls": "metal",
+  "mt5": "SILVER"
+ },
+ "US100": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 1.0,
+  "spread_pts": 240.0,
+  "cls": "index",
+  "mt5": "US100Cash"
+ },
+ "US30": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 1.0,
+  "spread_pts": 500.0,
+  "cls": "index",
+  "mt5": "US30Cash"
+ },
+ "US500": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 1.0,
+  "spread_pts": 60.0,
+  "cls": "index",
+  "mt5": "US500Cash"
+ },
+ "GER40": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 1.0,
+  "spread_pts": 230.0,
+  "cls": "index",
+  "mt5": "GER40Cash"
+ },
+ "BTCUSD": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 1.0,
+  "spread_pts": 5000.0,
+  "cls": "crypto",
+  "mt5": "BTCUSD"
+ },
+ "ETHUSD": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 1.0,
+  "spread_pts": 490.0,
+  "cls": "crypto",
+  "mt5": "ETHUSD"
+ },
+ "USOIL": {
+  "point": 0.01,
+  "digits": 2,
+  "contract": 100.0,
+  "spread_pts": 3.0,
+  "cls": "oil",
+  "mt5": "OILCash"
+ }
+}

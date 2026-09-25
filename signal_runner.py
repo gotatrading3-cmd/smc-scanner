@@ -1,0 +1,586 @@
+"""
+signal_runner.py - Canal de signaux GOTA Confluence. Tourne :
+  * en CLOUD (GitHub Actions, gratuit, PC eteint)  : python signal_runner.py --once     (backend yahoo)
+  * en LOCAL (PC Windows + MT5)                   : python signal_runner.py            (boucle 60 s)
+
+    python signal_runner.py --once          # un seul cycle (mode cloud)
+    python signal_runner.py --demo          # envoie un EXEMPLE (signal historique) en APERCU
+    python signal_runner.py --demo --no-send# genere les images en local sans rien envoyer
+    python signal_runner.py --check-channel # verifie que le bot peut publier (ne poste rien)
+    python signal_runner.py --setup         # assistant : canal, lien prive, activation
+    python signal_runner.py --recap|--promo|--edu   # apercus de contenu
+
+MODE APERCU PAR DEFAUT : rien n'est publie a ta communaute tant que "live" n'est pas active (channel.json
+ou variable GitHub SIGNALS_LIVE=true) ET qu'un canal est configure. LECTURE SEULE cote marche : aucun ordre.
+"""
+from __future__ import annotations
+import io
+import json
+import os
+import sys
+import time
+import traceback
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+import pandas as pd
+
+import signal_data as sd
+from signal_data import connect, shutdown, get_rates, get_tick, symbol_meta, UNIVERSE, available_ids, utc_now, TF_MIN
+from signal_engine import Signal, TradeSim, analyze, htf_bias, summarize
+from signal_publisher import Publisher, load_cfg, save_cfg, DISCLAIMER
+from chart_render import render_signal_chart, render_recap_card, GREEN, RED, GOLD, BLUE, WHITE
+
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
+
+DIR = Path(__file__).parent
+DATA_DIR = Path(os.environ.get("SIGNALS_DATA_DIR") or DIR)          # etat + historique (branche "data" en cloud)
+STATE_FILE = DATA_DIR / "signals_state.json"
+HISTORY_FILE = DATA_DIR / "signals_history.jsonl"
+LOG_FILE = DIR / "signals.log"
+OUT_DIR = DIR / "signal_out"
+PAUSE_FILE = DIR / ".signals_pause"
+HTF = {"1h": ("4h", 240), "4h": ("1d", 1440)}                        # biais de tendance par timeframe d'entree
+MAX_ENTRY_DRIFT_R = 0.35         # pas de publication si le prix s'est trop eloigne de l'entree
+MAX_NET_EXPOSURE = 2             # max de trades actifs dans le meme sens sur une devise / un cluster
+CYCLE_SECONDS = 60
+OUTAGE_ALERT_RUNS = 8            # nb de cycles consecutifs sans aucune donnee avant alerte au proprietaire
+_stats = {"ok": 0, "fail": 0}
+
+
+def log(msg: str) -> None:
+    line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    print(line, flush=True)
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
+# ------------------------------------------------------------------ etat / historique
+def load_state() -> dict:
+    st = {"version": 2, "started": utc_now().isoformat(), "last_bar": {}, "next_check": {}, "active": {},
+          "per_day": {}, "last_signal": {}, "sched": {}, "previewed": [], "data_fail_runs": 0, "outage_alerted": False}
+    if STATE_FILE.exists():
+        try:
+            st.update(json.loads(STATE_FILE.read_text(encoding="utf-8")))
+        except Exception as e:
+            log(f"[STATE] illisible ({e}) - etat neuf")
+    return st
+
+
+def save_state(st: dict) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(st, indent=1, default=str), encoding="utf-8")
+    os.replace(tmp, STATE_FILE)
+
+
+def append_history(rec: dict) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with HISTORY_FILE.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, default=str) + "\n")
+
+
+def load_history() -> List[dict]:
+    if not HISTORY_FILE.exists():
+        return []
+    out = []
+    for ln in HISTORY_FILE.read_text(encoding="utf-8").splitlines():
+        try:
+            out.append(json.loads(ln))
+        except Exception:
+            pass
+    return out
+
+
+def tf_key_of(sig: Signal) -> str:
+    return {60: "1h", 240: "4h"}[int(sig.tf.rstrip("m"))]
+
+
+# ------------------------------------------------------------------ exposition (garde-fou de correlation)
+def exposures(display: str, direction: str) -> Dict[str, int]:
+    s = 1 if direction == "LONG" else -1
+    if display in ("US100", "US30", "US500"):
+        return {"US_EQUITY": s}
+    if display == "GER40":
+        return {"EU_EQUITY": s}
+    if display == "USOIL":
+        return {"OIL": s}
+    if len(display) == 6:
+        return {display[:3]: s, display[3:]: -s}
+    return {display: s}
+
+
+def net_exposure(active: Dict[str, dict]) -> Dict[str, int]:
+    tot: Dict[str, int] = {}
+    for rec in active.values():
+        sg = rec["signal"]
+        for k, v in exposures(sg["display"], sg["direction"]).items():
+            tot[k] = tot.get(k, 0) + v
+    return tot
+
+
+# ------------------------------------------------------------------ scan
+def scan_symbol(sid: str, cls: str, st: dict, cfg: dict, now: pd.Timestamp):
+    """Retourne (signal, df, meta) si un nouveau signal se forme sur la derniere bougie cloturee."""
+    tf = cfg["timeframe"]
+    tfm = TF_MIN[tf]
+    htf, htfm = HTF[tf]
+    nc = st["next_check"].get(sid)
+    if nc and pd.Timestamp(nc) > now:
+        return None
+    df1 = get_rates(sid, tf, 700)
+    dfh = get_rates(sid, htf, 1000 if htf == "4h" else 800)
+    if df1 is None or dfh is None or len(df1) < 300 or len(dfh) < 260:
+        _stats["fail"] += 1
+        st["next_check"][sid] = (now + pd.Timedelta(minutes=5)).isoformat()
+        return None
+    _stats["ok"] += 1
+    last = df1.index[-1]
+    if st["last_bar"].get(sid) == last.isoformat():          # pas de nouvelle bougie (marche ferme / pas encore dispo)
+        st["next_check"][sid] = (now + pd.Timedelta(minutes=10)).isoformat()
+        return None
+    st["last_bar"][sid] = last.isoformat()
+    st["next_check"][sid] = (last + pd.Timedelta(minutes=2 * tfm + 1)).isoformat()
+    meta = symbol_meta(sid)
+    if meta is None:
+        return None
+    bias = htf_bias(dfh, df1.index, tfm, htf_minutes=htfm)
+    sigs = analyze(df1, bias, meta["point"], sid, sid, tfm, cls, only_last=True, min_score=cfg["min_score"])
+    return (sigs[0], df1, meta) if sigs else None
+
+
+def is_fresh(sig: Signal, now: pd.Timestamp, cfg: dict) -> Optional[str]:
+    """None si OK, sinon la raison du rejet."""
+    max_age = float(cfg.get("max_signal_age_min") or (50 if sd.BACKEND == "yahoo" else 25))
+    age = (now - pd.Timestamp(sig.signal_time)).total_seconds() / 60
+    if age > max_age:
+        return f"perime ({age:.0f} min)"
+    tk = get_tick(sig.symbol)
+    if tk is None:
+        return "prix indisponible"
+    price = tk[1] if sig.direction == "LONG" else tk[0]
+    if abs(price - sig.entry) > MAX_ENTRY_DRIFT_R * sig.risk:
+        return f"prix trop eloigne de l'entree ({abs(price - sig.entry) / sig.risk:.2f}R)"
+    return None
+
+
+def choose(cands: list, st: dict, cfg: dict, now: pd.Timestamp) -> list:
+    day = str(now.date())
+    n_today = st["per_day"].get(day, 0)
+    active_syms = {rec["signal"]["symbol"] for rec in st["active"].values()}
+    net = net_exposure(st["active"])
+    chosen = []
+    for c in sorted(cands, key=lambda c: (-c[0].score, c[0].risk / c[0].atr)):
+        s = c[0]
+        why = None
+        if s.symbol in active_syms:
+            why = "un signal est deja actif sur ce symbole"
+        elif st["last_signal"].get(s.symbol) and (now - pd.Timestamp(st["last_signal"][s.symbol])) < pd.Timedelta(hours=6):
+            why = "cooldown 6h sur ce symbole"
+        elif n_today + len(chosen) >= cfg["max_signals_per_day"]:
+            why = f"plafond du jour atteint ({cfg['max_signals_per_day']})"
+        elif len(st["active"]) + len(chosen) >= cfg["max_active"]:
+            why = "trop de signaux actifs"
+        else:
+            for k, v in exposures(s.display, s.direction).items():
+                if abs(net.get(k, 0) + v) > MAX_NET_EXPOSURE:
+                    why = f"exposition {k} deja au maximum"
+                    break
+        if why:
+            log(f"[SKIP] {s.display} {s.direction} score {s.score}/6 : {why}")
+            continue
+        chosen.append(c)
+        for k, v in exposures(s.display, s.direction).items():
+            net[k] = net.get(k, 0) + v
+        active_syms.add(s.symbol)
+    return chosen
+
+
+def publish_signal(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pub: Publisher, cfg: dict) -> bool:
+    OUT_DIR.mkdir(exist_ok=True)
+    img = OUT_DIR / f"{sig.id}.png"
+    render_signal_chart(df1, sig, str(img), digits=meta["digits"], brand=cfg["brand"])
+    mid = pub.post_signal(sig, str(img), meta["digits"])
+    if mid is None:
+        log(f"[PUB] ECHEC publication {sig.id} (Telegram) - non enregistre")
+        return False
+    now = utc_now()
+    st["active"][sig.id] = {"signal": sig.to_dict(), "sim": TradeSim(sig).to_dict(), "msg_id": mid,
+                            "digits": meta["digits"], "published": now.isoformat(),
+                            "mode": "live" if pub.live else "preview"}
+    st["per_day"][str(now.date())] = st["per_day"].get(str(now.date()), 0) + 1
+    st["last_signal"][sig.symbol] = now.isoformat()
+    log(f"[SIGNAL] {'LIVE' if pub.live else 'APERCU'} {sig.display} {sig.direction} grade {sig.grade} ({sig.score}/6) "
+        f"entree {sig.entry:.{meta['digits']}f} SL {sig.sl:.{meta['digits']}f} TP1 {sig.tps[0]:.{meta['digits']}f}")
+    return True
+
+
+# ------------------------------------------------------------------ suivi des signaux actifs
+def update_active(st: dict, pub: Publisher, cfg: dict) -> None:
+    for sid, rec in list(st["active"].items()):
+        sig = Signal.from_dict(rec["signal"])
+        sim = TradeSim.from_dict(rec["sim"])
+        bars = get_rates(sig.symbol, "5m", 3000)
+        if bars is None:
+            _stats["fail"] += 1
+            continue
+        _stats["ok"] += 1
+        t0 = pd.Timestamp(sig.signal_time)
+        bars = bars[bars.index >= t0]
+        if sim.last_ts:
+            bars = bars[bars.index > pd.Timestamp(sim.last_ts)]
+        events: List[dict] = []
+        for ts, row in bars.iterrows():
+            events += sim.feed(ts, float(row["high"]), float(row["low"]), float(row["close"]), bar_minutes=5)
+            if sim.closed:
+                break
+        rec["sim"] = sim.to_dict()
+        for ev in events:
+            img = None
+            if ev["type"] in ("TP1", "TP3", "SL", "BE", "EXPIRED"):
+                img = _result_image(sig, ev, sim, rec["digits"], cfg)
+            pub.post_update(sig, ev, sim.r, rec["msg_id"], img)
+            log(f"[SUIVI] {sig.display} {ev['type']} @ {ev['price']:.{rec['digits']}f}  (R cumule {sim.r:+.2f})")
+        if sim.closed:
+            append_history({"id": sig.id, "display": sig.display, "direction": sig.direction, "grade": sig.grade,
+                            "score": sig.score, "signal_time": sig.signal_time, "entry": sig.entry, "sl": sig.sl,
+                            "tps": sig.tps, "outcome": sim.outcome, "r": round(sim.r, 3),
+                            "close_time": sim.close_time, "mode": rec.get("mode", "preview")})
+            del st["active"][sid]
+            log(f"[CLOTURE] {sig.display} {sim.outcome} {sim.r:+.2f}R")
+
+
+_LABELS = {"TP1": ("TP1 ATTEINT", GREEN), "TP3": ("TP3 ATTEINT", GREEN), "SL": ("STOP TOUCHÉ", RED),
+           "BE": ("CLÔTURE À L'ENTRÉE", BLUE), "EXPIRED": ("SETUP EXPIRÉ", GOLD)}
+
+
+def _result_image(sig: Signal, ev: dict, sim: TradeSim, digits: int, cfg: dict) -> Optional[str]:
+    try:
+        df = get_rates(sig.symbol, tf_key_of(sig), 400)
+        if df is None:
+            return None
+        k = df.index.get_loc(pd.Timestamp(sig.bar_open))
+        label, color = _LABELS.get(ev["type"], (ev["type"], GOLD))
+        OUT_DIR.mkdir(exist_ok=True)
+        p = OUT_DIR / f"{sig.id}_{ev['type']}.png"
+        render_signal_chart(df, sig, str(p), digits=digits, n_after=min(len(df) - 1 - k, 40), brand=cfg["brand"],
+                            result={"label": label, "r": sim.r, "color": color, "hit": list(sim.hit),
+                                    "stopped": ev["type"] == "SL"})
+        return str(p)
+    except Exception as e:
+        log(f"[IMG] resultat sans image ({e})")
+        return None
+
+
+# ------------------------------------------------------------------ bilans
+def _label_outcome(o: str) -> str:
+    return {"SL": "Stop touché", "TP1": "TP1 puis stop à l'entrée", "TP2": "TP2 atteint", "TP3": "TP3 atteint",
+            "EXPIRED": "Expiré"}.get(o, o)
+
+
+def _stats_line(recs: List[dict]) -> str:
+    s = summarize([{"r": r["r"], "outcome": r["outcome"]} for r in recs])
+    if not s.get("n"):
+        return "aucun trade clôturé"
+    return (f"{s['n']} signaux · {s['tp1']:.0f} % atteignent TP1 · {s['sl']:.0f} % stoppés · "
+            f"résultat cumulé <b>{s['total_r']:+.1f}R</b>")
+
+
+def post_daily_recap(st: dict, pub: Publisher, now: pd.Timestamp) -> bool:
+    hist = load_history()
+    today = [r for r in hist if str(r["close_time"])[:10] == str(now.date())]
+    if not today:
+        return False
+    tot = sum(r["r"] for r in today)
+    rows = "\n".join(f"• {r['display']} {'ACHAT' if r['direction'] == 'LONG' else 'VENTE'} → {_label_outcome(r['outcome'])} ({r['r']:+.2f}R)"
+                     for r in today)
+    text = (f"📊 <b>Bilan du {now.strftime('%d/%m/%Y')}</b>\n{rows}\n\n"
+            f"Résultat du jour : <b>{tot:+.2f}R</b>\n"
+            f"Depuis le début du suivi ({str(st['started'])[:10]}) : {_stats_line(hist)}\n\n{DISCLAIMER}")
+    return pub.send_text(text, button=True) is not None
+
+
+def build_recap_image(st: dict, hist: List[dict], now: pd.Timestamp, week_only: bool, cfg: dict) -> Optional[str]:
+    recs = hist
+    title, sub = "BILAN DEPUIS LE LANCEMENT", f"Suivi depuis le {str(st['started'])[:10]} · pertes incluses"
+    if week_only:
+        mon = (now - pd.Timedelta(days=now.weekday())).normalize()
+        recs = [r for r in hist if pd.Timestamp(r["close_time"]) >= mon]
+        title, sub = "BILAN DE LA SEMAINE", f"Semaine du {mon.strftime('%d/%m/%Y')} · pertes incluses"
+    if not recs:
+        return None
+    recs = sorted(recs, key=lambda r: r["close_time"])
+    s = summarize([{"r": r["r"], "outcome": r["outcome"]} for r in recs])
+    cum, curve = 0.0, [0.0]
+    for r in recs:
+        cum += r["r"]
+        curve.append(cum)
+    kpis = [("Signaux clôturés", s["n"], WHITE), ("Atteignent TP1", f"{s['tp1']:.0f}%", GREEN),
+            ("Stops touchés", f"{s['sl']:.0f}%", RED), ("Résultat", f"{s['total_r']:+.1f}R", GREEN if s["total_r"] >= 0 else RED)]
+    rows = [{"date": pd.Timestamp(r["close_time"]).strftime("%d/%m"), "symbol": r["display"], "dir": r["direction"],
+             "outcome": _label_outcome(r["outcome"]), "r": r["r"]} for r in reversed(recs)]
+    OUT_DIR.mkdir(exist_ok=True)
+    p = OUT_DIR / f"recap_{'week' if week_only else 'all'}_{now:%Y%m%d}.png"
+    render_recap_card(title, sub, kpis, rows, curve, str(p), brand=cfg["brand"])
+    return str(p)
+
+
+def post_weekly_recap(st: dict, pub: Publisher, cfg: dict, now: pd.Timestamp) -> bool:
+    hist = load_history()
+    img = build_recap_image(st, hist, now, True, cfg)
+    if not img:
+        return False
+    wk = [r for r in hist if pd.Timestamp(r["close_time"]) >= (now - pd.Timedelta(days=now.weekday())).normalize()]
+    cap = f"📊 <b>Bilan de la semaine</b>\nCette semaine : {_stats_line(wk)}\nDepuis le début : {_stats_line(hist)}"
+    return pub.post_recap_image(img, cap) is not None
+
+
+# ------------------------------------------------------------------ posts programmes
+def scheduled(st: dict, pub: Publisher, cfg: dict, now: pd.Timestamp) -> None:
+    sch, hm = st["sched"], now.hour * 60 + now.minute
+    today, wk = str(now.date()), f"{now.isocalendar()[0]}-W{now.isocalendar()[1]}"
+
+    def due(key: str, h: int, m: int, kind: str, weekdays=None) -> bool:
+        if sch.get(kind) == key:
+            return False
+        if weekdays is not None and now.weekday() not in weekdays:
+            return False
+        start = h * 60 + m
+        if not (start <= hm < start + 180):
+            return False
+        if not pub.live and kind in st["previewed"]:      # en apercu : un seul exemplaire de chaque type
+            return False
+        return True
+
+    if cfg.get("education_posts_per_day", 0) and due(today, 8, 30, "edu"):
+        pub.post_education(now.timetuple().tm_yday)
+        sch["edu"] = today
+        st["previewed"].append("edu")
+    if cfg.get("promo_posts_per_day", 0) and str(cfg.get("private_link", "")).startswith("http") and due(today, 10, 30, "promo"):
+        pub.post_promo()
+        sch["promo"] = today
+        st["previewed"].append("promo")
+    if cfg.get("daily_recap") and due(today, 21, 30, "daily", weekdays=range(0, 5)):
+        post_daily_recap(st, pub, now)
+        sch["daily"] = today
+        st["previewed"].append("daily")
+    if cfg.get("weekly_recap") and due(wk, 21, 45, "weekly", weekdays=(4,)):
+        post_weekly_recap(st, pub, cfg, now)
+        sch["weekly"] = wk
+        st["previewed"].append("weekly")
+
+
+# ------------------------------------------------------------------ cycle principal
+def run_cycle(st: dict, cfg: dict, pub: Publisher, ids: List[str]) -> None:
+    now = utc_now()
+    _stats["ok"] = _stats["fail"] = 0
+    update_active(st, pub, cfg)
+    cands = []
+    for sid in ids:
+        try:
+            r = scan_symbol(sid, UNIVERSE[sid]["cls"], st, cfg, now)
+        except Exception as e:
+            log(f"[SCAN] {sid} erreur : {e}")
+            _stats["fail"] += 1
+            continue
+        if r:
+            reason = is_fresh(r[0], now, cfg)
+            if reason:
+                log(f"[SKIP] {sid} {r[0].direction} {r[0].score}/6 : {reason}")
+                continue
+            cands.append(r)
+            log(f"[CANDIDAT] {sid} {r[0].direction} score {r[0].score}/6 grade {r[0].grade}")
+    for sig, df1, meta in choose(cands, st, cfg, now):
+        publish_signal(sig, df1, meta, st, pub, cfg)
+    scheduled(st, pub, cfg, now)
+    # alerte si la source de prix est indisponible depuis longtemps (au proprietaire uniquement)
+    if _stats["ok"] == 0 and _stats["fail"] > 0:
+        st["data_fail_runs"] = st.get("data_fail_runs", 0) + 1
+        if st["data_fail_runs"] >= OUTAGE_ALERT_RUNS and not st.get("outage_alerted"):
+            pub.notify_owner("⚠️ <b>GOTA Signaux</b> : la source de prix ne répond plus depuis "
+                             f"{st['data_fail_runs']} cycles. Aucun signal ne peut être produit. Je réessaie automatiquement.")
+            st["outage_alerted"] = True
+    elif _stats["ok"] > 0:
+        st["data_fail_runs"], st["outage_alerted"] = 0, False
+    save_state(st)
+
+
+def loop(once: bool = False) -> None:
+    cfg = load_cfg()
+    log("=== GOTA SIGNAUX - DEMARRAGE ===")
+    pub = Publisher(cfg, log=log)
+    log(f"  backend : {sd.BACKEND} | mode : {'LIVE (canal ' + str(cfg['channel_id']) + ')' if pub.live else 'APERCU (chat prive uniquement)'}")
+    log(f"  timeframe {cfg['timeframe']} (biais {HTF[cfg['timeframe']][0]}) | score min {cfg['min_score']}/6 | max {cfg['max_signals_per_day']}/jour")
+    if not connect(log=log):
+        log("Source de donnees indisponible - arret")
+        return
+    st = load_state()
+    while True:
+        try:
+            if PAUSE_FILE.exists() or str(os.environ.get("SIGNALS_PAUSED", "")).lower() in ("1", "true", "yes"):
+                log("[PAUSE] signaux en pause - aucun scan")
+            else:
+                cfg = load_cfg()
+                pub = Publisher(cfg, log=log)
+                want = cfg.get("symbols") or []
+                ids = [i for i in available_ids() if not want or i in want]
+                run_cycle(st, cfg, pub, ids)
+                log(f"[CYCLE] {len(ids)} symboles | donnees ok={_stats['ok']} echec={_stats['fail']} | actifs={len(st['active'])}")
+        except Exception as e:
+            log(f"[ERREUR] {e}\n{traceback.format_exc()[-600:]}")
+            if not once:
+                try:
+                    shutdown()
+                    connect(log=log)
+                except Exception:
+                    pass
+        if once:
+            break
+        time.sleep(CYCLE_SECONDS)
+    shutdown()
+
+
+# ------------------------------------------------------------------ demo / outils
+def demo() -> None:
+    """Envoie un EXEMPLE en APERCU : un signal historique recent (avec son resultat) de la watchlist."""
+    cfg = load_cfg()
+    cfg["live"] = False
+    pub = Publisher(cfg, log=log)
+    pub.live, pub.target = False, pub.owner_chat
+    pub._tag = lambda: ("🧪 <b>EXEMPLE</b> · signal <u>historique</u> pour montrer le rendu — "
+                        "ce n'est PAS un signal en cours, et il n'est visible que par toi\n\n")
+    send = "--no-send" not in sys.argv
+    if not connect(log=log):
+        log("Source de donnees indisponible")
+        return
+    tf = cfg["timeframe"]
+    tfm = TF_MIN[tf]
+    htf, htfm = HTF[tf]
+    best = None
+    for sid in available_ids():
+        df1, dfh = get_rates(sid, tf, 900), get_rates(sid, htf, 1000 if htf == "4h" else 800)
+        meta = symbol_meta(sid)
+        if df1 is None or dfh is None or meta is None:
+            continue
+        bias = htf_bias(dfh, df1.index, tfm, htf_minutes=htfm)
+        for s in analyze(df1, bias, meta["point"], sid, sid, tfm, UNIVERSE[sid]["cls"], min_score=4):
+            k = df1.index.get_loc(pd.Timestamp(s.bar_open))
+            sim = TradeSim(s)
+            for j in range(k + 1, len(df1)):
+                sim.feed(df1.index[j], float(df1["high"].iloc[j]), float(df1["low"].iloc[j]), float(df1["close"].iloc[j]), bar_minutes=tfm)
+                if sim.closed:
+                    break
+            if not sim.closed:
+                continue
+            key = (pd.Timestamp(s.signal_time), s.score)
+            if best is None or key > best[0]:
+                best = (key, s, df1, meta)
+    if not best:
+        log("Aucun exemple trouve.")
+        shutdown()
+        return
+    _, sig, df1, meta = best
+    OUT_DIR.mkdir(exist_ok=True)
+    img = OUT_DIR / f"demo_{sig.id}.png"
+    render_signal_chart(df1, sig, str(img), digits=meta["digits"], brand=cfg["brand"])
+    log(f"[DEMO] image : {img}")
+    print("\n--- LEGENDE ---\n" + pub.signal_caption(sig, meta["digits"]).replace("<b>", "").replace("</b>", "")
+          .replace("<code>", "").replace("</code>", "") + "\n")
+    mid = pub.post_signal(sig, str(img), meta["digits"]) if send else None
+    if send:
+        log(f"[DEMO] signal {sig.id} envoye (message {mid})")
+    sim = TradeSim(sig)
+    k0 = df1.index.get_loc(pd.Timestamp(sig.bar_open))
+    shown = 0
+    for j in range(k0 + 1, len(df1)):
+        for ev in sim.feed(df1.index[j], float(df1["high"].iloc[j]), float(df1["low"].iloc[j]), float(df1["close"].iloc[j]), bar_minutes=tfm):
+            if ev["type"] in ("TP1", "TP3", "SL", "BE", "EXPIRED") and shown < 2:
+                p = _demo_result_image(df1, sig, ev, sim, meta["digits"], cfg)
+                log(f"[DEMO] image resultat : {p}")
+                if send:
+                    pub.post_update(sig, ev, sim.r, mid, p)
+                shown += 1
+        if sim.closed:
+            break
+    shutdown()
+
+
+def _demo_result_image(df, sig, ev, sim, digits, cfg):
+    k = df.index.get_loc(pd.Timestamp(sig.bar_open))
+    tev = pd.Timestamp(ev["time"])
+    j = df.index.get_loc(tev) if tev in df.index else len(df) - 1
+    label, color = _LABELS.get(ev["type"], (ev["type"], GOLD))
+    p = OUT_DIR / f"demo_{sig.id}_{ev['type']}.png"
+    render_signal_chart(df.iloc[: j + 1], sig, str(p), digits=digits, n_after=min(j - k, 40), brand=cfg["brand"],
+                        result={"label": label, "r": sim.r, "color": color, "hit": list(sim.hit), "stopped": ev["type"] == "SL"})
+    return str(p)
+
+
+def setup_wizard() -> None:
+    cfg = load_cfg()
+    print("\n=== Assistant du canal de signaux GOTA TRADING ===\n")
+    print("Avant de continuer, fais ceci dans Telegram :")
+    print("  1. Cree ton canal PUBLIC (ex: @gota_signaux)")
+    print("  2. Canal -> Administrateurs -> Ajouter -> choisis TON bot -> coche 'Publier des messages'")
+    print("  3. Cree ton canal PRIVE et copie son lien d'invitation (https://t.me/+xxxx)\n")
+    ch = input(f"Canal public (@nom ou -100...) [{cfg.get('channel_id') or 'vide'}] : ").strip() or cfg.get("channel_id", "")
+    lk = input(f"Lien du canal prive [{cfg.get('private_link') or 'vide'}] : ").strip() or cfg.get("private_link", "")
+    cfg["channel_id"], cfg["private_link"] = ch, lk
+    save_cfg(cfg)
+    pub = Publisher(cfg)
+    res = pub.check_channel()
+    print("\nVerification :", res["detail"])
+    if not res["ok"]:
+        print("Corrige puis relance l'assistant. Le mode reste en APERCU (rien n'est publie).")
+        return
+    if input("\nEnvoyer un message de test dans le canal ? (o/N) : ").strip().lower() == "o":
+        Publisher(dict(cfg, live=True)).send_text("✅ Connexion OK — le bot est prêt à publier ici.")
+    print("\nMode actuel : APERCU. Les signaux arrivent seulement dans ton chat prive.")
+    print("Conseil : laisse tourner en apercu plusieurs semaines pour juger les resultats REELS avant de publier.")
+    if input("Tape PUBLIER pour activer la publication REELLE dans le canal (Entree = rester en apercu) : ").strip() == "PUBLIER":
+        cfg["live"] = True
+        save_cfg(cfg)
+        print("Publication reelle ACTIVEE. (Pour revenir en apercu : \"live\": false dans channel.json)")
+    else:
+        cfg["live"] = False
+        save_cfg(cfg)
+        print("Reste en APERCU.")
+
+
+def main() -> None:
+    a = sys.argv[1:]
+    if "--setup" in a:
+        return setup_wizard()
+    if "--check-channel" in a:
+        print(Publisher(load_cfg()).check_channel()["detail"])
+        return
+    if "--demo" in a:
+        return demo()
+    if any(x in a for x in ("--recap", "--promo", "--edu")):
+        cfg = load_cfg()
+        cfg["live"] = False
+        pub = Publisher(cfg, log=log)
+        pub.live, pub.target = False, pub.owner_chat
+        st = load_state()
+        now = utc_now()
+        if "--promo" in a:
+            pub.post_promo()
+        if "--edu" in a:
+            pub.post_education(now.timetuple().tm_yday)
+        if "--recap" in a:
+            img = build_recap_image(st, load_history(), now, False, cfg)
+            if img:
+                pub.post_recap_image(img, "📊 <b>Bilan depuis le lancement</b> (aperçu)")
+            else:
+                print("Aucun trade clôturé dans l'historique pour l'instant.")
+        return
+    loop(once="--once" in a)
+
+
+if __name__ == "__main__":
+    main()

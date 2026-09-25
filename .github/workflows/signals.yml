@@ -1,0 +1,87 @@
+name: GOTA Signaux
+
+# Tourne dans le cloud GitHub (gratuit sur un depot public), PC eteint.
+# Par defaut : MODE APERCU (les messages n'arrivent que dans ton chat prive Telegram).
+# Publication vers le canal : variable SIGNALS_LIVE=true + secret CHANNEL_ID (voir README du systeme).
+
+on:
+  schedule:
+    - cron: "3,18,33,48 * * * *"
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "scan = cycle normal | demo = exemple en apercu | recap = apercu du bilan | edu = apercu conseil"
+        type: choice
+        default: scan
+        options: [scan, demo, recap, edu]
+
+concurrency:
+  group: gota-signals
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SIGNAL_BACKEND: yahoo
+      SIGNALS_DATA_DIR: ${{ github.workspace }}/data
+      PYTHONIOENCODING: utf-8
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+      PRIVATE_LINK: ${{ secrets.PRIVATE_LINK }}
+      SIGNALS_LIVE: ${{ vars.SIGNALS_LIVE }}
+      SIGNALS_TF: ${{ vars.SIGNALS_TF }}
+      SIGNALS_MIN_SCORE: ${{ vars.SIGNALS_MIN_SCORE }}
+      SIGNALS_MAX_PER_DAY: ${{ vars.SIGNALS_MAX_PER_DAY }}
+      SIGNALS_SYMBOLS: ${{ vars.SIGNALS_SYMBOLS }}
+      SIGNALS_PAUSED: ${{ vars.SIGNALS_PAUSED }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Donnees (branche data = historique public et auditable)
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          path: data
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-cloud.txt
+
+      - run: pip install -r requirements-cloud.txt
+
+      - name: Executer
+        env:
+          ACTION: ${{ github.event.inputs.action || 'scan' }}
+        run: |
+          case "$ACTION" in
+            demo)  python signal_runner.py --demo ;;
+            recap) python signal_runner.py --recap ;;
+            edu)   python signal_runner.py --edu ;;
+            *)     python signal_runner.py --once ;;
+          esac
+
+      - name: Sauvegarder l'etat et l'historique (commit horodate = piste d'audit publique)
+        if: always()
+        working-directory: data
+        run: |
+          git config user.name "gota-signals[bot]"
+          git config user.email "gota-signals@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "etat $(date -u +%Y-%m-%dT%H:%MZ)"
+            git push origin data
+          fi
+
+      - name: Garder le planificateur actif (GitHub coupe les cron apres 60 jours d'inactivite)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow enable signals.yml || true
