@@ -1,0 +1,105 @@
+name: GOTA Continu
+
+# Le robot tourne EN CONTINU chez GitHub, PC eteint, sans compte ni cle exterieurs.
+# Un job dure ~5 h 40 : il lance un scan toutes les 5 minutes, sauvegarde l'etat apres chaque scan, puis relance le job
+# suivant (workflow_dispatch avec le jeton du depot). Un filet de securite (cron) relance la chaine si elle s'arrete.
+# Les scans courts de "GOTA Signaux" ne font rien tant que cette chaine est active (ils prennent le relais si elle s'arrete).
+# Arret : variable CHAIN_STOP=true, ou annuler l'execution en cours dans l'onglet Actions.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Duree de ce job en minutes (defaut 340)"
+        type: string
+        default: "340"
+  schedule:
+    - cron: "17 */3 * * *"
+
+concurrency:
+  group: gota-chain
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  continu:
+    if: ${{ vars.CHAIN_STOP != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      SIGNAL_BACKEND: yahoo
+      SIGNALS_DATA_DIR: ${{ github.workspace }}/data
+      PYTHONIOENCODING: utf-8
+      SIGNALS_QUIET_LOG: "1"
+      SIGNALS_STATE_KEY: ${{ secrets.SIGNALS_STATE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      VIP_CHAT_ID: ${{ secrets.VIP_CHAT_ID }}
+      CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+      PRIVATE_LINK: ${{ secrets.PRIVATE_LINK }}
+      CONTACT_LINK: ${{ vars.CONTACT_LINK }}
+      ACCOUNT_LINK: ${{ vars.ACCOUNT_LINK }}
+      SIGNALS_LIVE: ${{ vars.SIGNALS_LIVE }}
+      PUBLIC_LIVE: ${{ vars.PUBLIC_LIVE }}
+      PUBLIC_SIGNALS_PER_DAY: ${{ vars.PUBLIC_SIGNALS_PER_DAY }}
+      SIGNALS_TF: ${{ vars.SIGNALS_TF }}
+      SIGNALS_MIN_SCORE: ${{ vars.SIGNALS_MIN_SCORE }}
+      SIGNALS_MAX_PER_DAY: ${{ vars.SIGNALS_MAX_PER_DAY }}
+      SIGNALS_SYMBOLS: ${{ vars.SIGNALS_SYMBOLS }}
+      SIGNALS_PAUSED: ${{ vars.SIGNALS_PAUSED }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Donnees (branche data = historique public et auditable)
+        uses: actions/checkout@v4
+        with:
+          ref: data
+          path: data
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-cloud.txt
+
+      - run: pip install -r requirements-cloud.txt
+
+      - name: Boucle de scans (un toutes les 5 minutes)
+        env:
+          MINUTES: ${{ github.event.inputs.minutes || '340' }}
+        run: |
+          git -C data config user.name "gota-signals[bot]"
+          git -C data config user.email "gota-signals@users.noreply.github.com"
+          END=$(( $(date +%s) + MINUTES * 60 ))
+          N=0
+          while [ "$(date +%s)" -lt "$END" ]; do
+            T0=$(date +%s)
+            N=$((N + 1))
+            # se resynchroniser avec la branche data (actions manuelles : post, guides...)
+            git -C data pull --rebase -q origin data || true
+            timeout 280 python signal_runner.py --once || echo "cycle $N : erreur ou delai depasse"
+            # sauvegarder l'etat apres CHAQUE cycle : jamais de publication en double apres un incident
+            cd data
+            git add -A
+            if ! git diff --cached --quiet; then
+              git commit -q -m "etat $(date -u +%Y-%m-%dT%H:%MZ)"
+              for I in 1 2 3; do
+                if git push -q origin data; then break; fi
+                git pull --rebase -q -X theirs origin data || git rebase --abort || true
+              done
+            fi
+            cd ..
+            # le cycle suivant part 5 minutes apres le debut de celui-ci
+            WAIT=$(( T0 + 300 - $(date +%s) ))
+            if [ "$WAIT" -gt 0 ]; then sleep "$WAIT"; fi
+          done
+          echo "Fin de la boucle apres $N cycles"
+
+      - name: Relancer la chaine (job suivant)
+        if: ${{ !cancelled() && vars.CHAIN_STOP != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run continu.yml --repo "$GITHUB_REPOSITORY"

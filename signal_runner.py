@@ -64,6 +64,7 @@ _stats = {"ok": 0, "fail": 0}
 STATE_KEY = os.environ.get("SIGNALS_STATE_KEY", "").strip()
 QUIET_LOG = str(os.environ.get("SIGNALS_QUIET_LOG", "")).strip().lower() in ("1", "true", "yes")
 PRIVATE_KEYS = ("active", "last_signal")
+_PRIV_SEEN: dict = {}            # dernier bloc prive lu (texte canonique -> jeton chiffre) : evite de re-chiffrer, donc un commit, sans changement
 
 
 def _stamp() -> str:
@@ -113,7 +114,10 @@ def load_state() -> dict:
             if not STATE_KEY:
                 raise RuntimeError("etat chiffre mais SIGNALS_STATE_KEY est absente : arret pour ne pas perdre les signaux en cours")
             try:
-                st.update(json.loads(_fernet().decrypt(enc.encode()).decode()))
+                priv = json.loads(_fernet().decrypt(enc.encode()).decode())
+                st.update(priv)
+                _PRIV_SEEN.clear()
+                _PRIV_SEEN[json.dumps(priv, default=str, sort_keys=True)] = enc
             except Exception as e:
                 raise RuntimeError(f"etat chiffre illisible ({type(e).__name__}) : cle incorrecte ? arret") from None
     return st
@@ -124,7 +128,10 @@ def save_state(st: dict) -> None:
     out = dict(st)
     if STATE_KEY:
         priv = {k: out.pop(k) for k in PRIVATE_KEYS if k in out}
-        out["private_enc"] = _fernet().encrypt(json.dumps(priv, default=str).encode()).decode()
+        canon = json.dumps(json.loads(json.dumps(priv, default=str)), sort_keys=True)
+        out["private_enc"] = _PRIV_SEEN.get(canon) or _fernet().encrypt(json.dumps(priv, default=str).encode()).decode()
+        _PRIV_SEEN.clear()
+        _PRIV_SEEN[canon] = out["private_enc"]
     tmp = STATE_FILE.with_suffix(".tmp")
     tmp.write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
     os.replace(tmp, STATE_FILE)
