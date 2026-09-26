@@ -47,3 +47,7 @@ __pycache__/
 .idea/
 *.swp
 .DS_Store
+
+# Logo : on garde les fichiers finaux, pas les apercus de travail
+brand/_*.png
+brand/logo_original_*.jpg

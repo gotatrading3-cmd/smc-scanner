@@ -1,6 +1,9 @@
 """
-chart_render.py - Images pour Telegram : graphique de signal, carte de resultat, carte de bilan.
-Theme sombre GOTA TRADING (or sur fond nuit). Aucune donnee inventee : tout vient du signal / de l'historique.
+chart_render.py (v2) - Images professionnelles pour Telegram : carte de signal, carte de resultat, bilan.
+
+Charte GOTA : noir profond, or (#d4af37), blanc. Logo reel dans brand/ (voir make_brand.py).
+Mise en page en PIXELS (canevas 1 unite = 1 px) : alignements nets, coins arrondis reguliers.
+Aucune donnee inventee : tout vient du signal / de l'historique.
 """
 from __future__ import annotations
 from pathlib import Path
@@ -8,205 +11,391 @@ from typing import List, Optional
 
 import numpy as np
 import pandas as pd
+from PIL import Image
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Rectangle, FancyBboxPatch  # noqa: E402
 
-BG, PANEL, GRID = "#0a0e15", "#111826", "#1b2433"
-TXT, MUTED, WHITE = "#c9d1d9", "#6e7681", "#e6edf3"
-GREEN, RED, GOLD, BLUE = "#22c55e", "#ef4444", "#fbbf24", "#38bdf8"
-LOGO = Path(__file__).parent / "logo.png"
+from signal_data import symbol_meta, UNIVERSE  # noqa: E402
+
+BRAND_DIR = Path(__file__).parent / "brand"
+BG, PANEL, BORDER, GRID = "#06080c", "#0b1017", "#1c2531", "#121922"
+TXT, WHITE, MUTED, DIM = "#e8ebf0", "#f4f6f9", "#8a93a1", "#4b5462"
+GOLD, GOLD_L = "#d4af37", "#f1d67c"
+UP, DOWN = "#26a69a", "#ef5350"                 # bougies (standard plateformes)
+GREEN, RED, BLUE = "#2ecc71", "#ef4444", "#38bdf8"
 TF_LABEL = {"1m": "M1", "5m": "M5", "15m": "M15", "60m": "H1", "240m": "H4"}
-DISCLAIMER = "Contenu éducatif — pas un conseil financier. Le trading comporte un risque de perte en capital."
+
+LEGAL_1 = "AVERTISSEMENT — Le trading comporte un risque élevé de perte en capital. Ne risquez que des fonds que vous pouvez vous permettre de perdre."
+LEGAL_2 = ("Contenu informatif et éducatif : il ne constitue ni un conseil en investissement, ni une recommandation personnalisée. "
+           "Les performances passées ne préjugent pas des performances futures.")
+DISCLAIMER = "Contenu éducatif — pas un conseil financier. Le trading comporte un risque de perte en capital."   # compat
 
 
-def _pfmt(p: float, digits: int) -> str:
+# ------------------------------------------------------------------ outils de mise en page
+_IMG: dict = {}
+_PIL: dict = {}
+
+
+def _pil(name: str):
+    if name not in _PIL:
+        p = BRAND_DIR / name
+        _PIL[name] = Image.open(p).convert("RGBA") if p.exists() else None
+    return _PIL[name]
+
+
+def _brand(name: str):
+    """Compat : tableau numpy du logo (ou None)."""
+    if name not in _IMG:
+        im = _pil(name)
+        _IMG[name] = np.asarray(im).astype(np.float32) / 255.0 if im is not None else None
+    return _IMG[name]
+
+
+def _spaced(t: str) -> str:
+    """Etiquettes en capitales espacees (look 'premium')."""
+    return " ".join(t.upper())
+
+
+class Card:
+    """Figure a mise en page en pixels. Deux couches : 'bg' (fond) et 'ov' (annotations au-dessus du graphique)."""
+
+    def __init__(self, w: int, h: int):
+        self.w, self.h = w, h
+        self.fig = plt.figure(figsize=(w / 100, h / 100), dpi=100, facecolor=BG)
+        self.bg = self._layer(0)
+        self.ov = None
+        self.r = self.fig.canvas.get_renderer()
+        # fond : degrade radial discret + liseré or
+        yy, xx = np.mgrid[0:90, 0:160]
+        d = np.sqrt(((xx - 80) / 80.0) ** 2 + ((yy - 40) / 60.0) ** 2)
+        c0, c1 = np.array([15, 20, 29]) / 255.0, np.array([5, 7, 10]) / 255.0
+        img = c0[None, None, :] * (1 - np.clip(d, 0, 1))[..., None] + c1[None, None, :] * np.clip(d, 0, 1)[..., None]
+        self.bg.imshow(img, extent=(0, w, h, 0), aspect="auto", interpolation="bilinear", zorder=0)
+        self._fix(self.bg)
+        self.rrect(self.bg, 12, 12, w - 24, h - 24, r=20, fc="none", ec=GOLD, lw=1.1, alpha=0.5, z=1)
+
+    def _layer(self, z: int):
+        ax = self.fig.add_axes([0, 0, 1, 1], zorder=z)
+        ax.axis("off")
+        return ax
+
+    def _fix(self, ax):
+        ax.set_xlim(0, self.w)
+        ax.set_ylim(self.h, 0)
+        ax.set_aspect("auto")
+
+    def overlay(self):
+        self.ov = self._layer(20)
+        self._fix(self.ov)
+        return self.ov
+
+    def chart_axes(self, x, y, w, h):
+        return self.fig.add_axes([x / self.w, 1 - (y + h) / self.h, w / self.w, h / self.h], zorder=5, facecolor="none")
+
+    @staticmethod
+    def rrect(ax, x, y, w, h, r=10, fc=PANEL, ec=BORDER, lw=1.0, alpha=1.0, z=2):
+        ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle=f"round,pad=0,rounding_size={r}",
+                                    fc=fc, ec=ec, lw=lw, alpha=alpha, zorder=z))
+
+    def text(self, ax, x, y, s, size=12, color=TXT, weight="normal", ha="left", va="center", z=10, **kw):
+        return ax.text(x, y, s, fontsize=size, color=color, fontweight=weight, ha=ha, va=va, zorder=z, **kw)
+
+    def width(self, t) -> float:
+        return t.get_window_extent(self.r).width
+
+    def logo(self, ax, name: str, x: float, y: float, height: float, z=10, alpha=1.0):
+        """Pose un logo de brand/ a la taille EXACTE en pixels (redimensionne avec PIL, alpha premultiplie :
+        pas de halo ni d'effet de trame comme avec le reechantillonnage de matplotlib)."""
+        im = _pil(name)
+        if im is None:
+            return 0.0
+        h = max(1, int(round(height)))
+        w = max(1, int(round(h * im.width / im.height)))
+        small = im.convert("RGBa").resize((w, h), Image.LANCZOS).convert("RGBA")
+        arr = np.asarray(small).astype(np.float32) / 255.0
+        if alpha != 1.0:
+            arr[..., 3] *= alpha
+        x0, y0 = int(round(x)), int(round(y))
+        ax.imshow(arr, extent=(x0, x0 + w, y0 + h, y0), aspect="auto", interpolation="none", zorder=z)
+        self._fix(ax)
+        return float(w)
+
+    def pill(self, ax, x, y, w, h, s, fc, tc="#06080c", size=13, ec=None, weight="bold", z=12):
+        self.rrect(ax, x, y, w, h, r=h / 2, fc=fc, ec=ec or fc, lw=1.4, z=z)
+        self.text(ax, x + w / 2, y + h / 2 + 1, s, size=size, color=tc, weight=weight, ha="center", z=z + 1)
+
+    def legal(self, ax, y: float, x: float = 44, maxw: Optional[float] = None):
+        """Avertissement sur le risque en capital : 'AVERTISSEMENT' en or gras, puis le texte."""
+        maxw = maxw or (self.w - 2 * x)
+        head, rest = "AVERTISSEMENT", LEGAL_1.split("AVERTISSEMENT", 1)[1]
+        size = 10.4
+        while True:
+            th = self.text(ax, x, y, head, size=size, color=GOLD, weight="bold")
+            tr = self.text(ax, x + self.width(th) + 4, y, rest, size=size, color="#9aa3b0")
+            if self.width(th) + 4 + self.width(tr) <= maxw or size <= 7:
+                break
+            th.remove(); tr.remove()
+            size -= 0.2
+        size = 10.0
+        t2 = self.text(ax, x, y + 22, LEGAL_2, size=size, color="#6f7887")
+        while self.width(t2) > maxw and size > 7:
+            size -= 0.2
+            t2.set_fontsize(size)
+
+    def save(self, path: str) -> str:
+        self.fig.savefig(path, dpi=100, facecolor=BG)
+        plt.close(self.fig)
+        return path
+
+
+def _pf(p: float, digits: int) -> str:
     return f"{p:,.{digits}f}".replace(",", " ")
 
 
-def _logo(fig, x=0.925, y=0.905, size=0.07):
-    if LOGO.exists():
-        try:
-            img = plt.imread(str(LOGO))
-            ax = fig.add_axes([x, y, size * 0.75, size * 1.0], anchor="NE", zorder=5)
-            ax.imshow(img)
-            ax.axis("off")
-        except Exception:
-            pass
+def _dist(sig, level: float) -> str:
+    """Distance depuis l'entree : pips (forex) ou unites de prix."""
+    m = symbol_meta(sig.display) or {}
+    cls = UNIVERSE.get(sig.display, {}).get("cls", "")
+    d = abs(level - sig.entry)
+    if cls == "fx" and m.get("point"):
+        return f"{d / (m['point'] * 10):.1f} pips"
+    return f"{d:,.2f}".replace(",", " ")
 
 
-def _pill(fig, x, y, w, h, text, fc, tc="#0a0e15", fs=13):
-    fig.patches.append(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0.002,rounding_size=0.012",
-                                      transform=fig.transFigure, fc=fc, ec="none", zorder=6))
-    fig.text(x + w / 2, y + h / 2, text, ha="center", va="center", color=tc, fontsize=fs,
-             fontweight="bold", zorder=7)
-
-
-def _spread_labels(items, gap):
-    """Evite que les etiquettes de niveaux se chevauchent (items = [(y, texte, couleur)])."""
-    items = sorted(items, key=lambda t: t[0])
-    ys = [it[0] for it in items]
-    for k in range(1, len(ys)):
-        if ys[k] - ys[k - 1] < gap:
-            ys[k] = ys[k - 1] + gap
-    return [(ys[k], items[k][1], items[k][2], items[k][0]) for k in range(len(items))]
-
-
-def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n_before: int = 56,
+# ------------------------------------------------------------------ carte de signal
+def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n_before: int = 62,
                         n_after: int = 0, brand: str = "GOTA TRADING",
                         result: Optional[dict] = None) -> str:
     """df : bougies (index = ouverture UTC) contenant la bougie du signal.
-    result (optionnel) : {"label": "TP1 ATTEINT", "r": 1.0, "color": GREEN, "hit": [True, False, False],
-                          "stopped": False, "until": Timestamp}"""
+    result (optionnel) : {"label": "TP1 ATTEINT", "r": 1.0, "color": GREEN, "hit": [True, False, False], "stopped": False}"""
+    W, H = 1600, 900
     long_ = sig.direction == "LONG"
+    dir_col = UP if long_ else DOWN
+    card = Card(W, H)
+    bg = card.bg
+    ov = card.overlay()
+
+    # ---------------------------------------------------------------- en-tete
+    lw_ = card.logo(bg, "logo_lockup.png", 44, 32, 94)
+    bg.add_line(plt.Line2D([44 + lw_ + 30, 44 + lw_ + 30], [42, 126], color=BORDER, lw=1.2, zorder=3))
+    tx = 44 + lw_ + 58
+    t_name = card.text(bg, tx, 66, sig.display, size=38, color=WHITE, weight="bold")
+    wn = card.width(t_name)
+    tf = TF_LABEL.get(sig.tf, sig.tf)
+    card.pill(bg, tx + wn + 18, 48, 62, 34, tf, fc="none", tc=GOLD, ec=GOLD, size=13)
+    when = pd.Timestamp(sig.signal_time).strftime("%d/%m/%Y  ·  %H:%M UTC")
+    card.text(bg, tx, 108, "Signal du " + when, size=12.5, color=MUTED)
+    rr = abs(sig.tps[-1] - sig.entry) / max(sig.risk, 1e-12)
+    x = W - 44
+    for lab, w_, fc, tc, ec in ((f"R:R  1 : {rr:.0f}", 142, "none", WHITE, "#3a4452"),
+                                (f"GRADE  {sig.grade}", 150, "none", GOLD, GOLD),
+                                ("ACHAT" if long_ else "VENTE", 150, dir_col, "#06080c", dir_col)):
+        x -= w_
+        card.pill(bg, x, 52, w_, 46, lab, fc=fc, tc=tc, ec=ec, size=14)
+        x -= 14
+
+    # ---------------------------------------------------------------- graphique
+    CX, CY, CW, CH = 44, 148, 1512, 452
+    card.rrect(bg, CX, CY, CW, CH, r=14, fc="#080c12", ec=BORDER, lw=1.0, z=1)
+    ax = card.chart_axes(CX + 76, CY + 14, CW - 76 - 176, CH - 14 - 34)
     i_sig = df.index.get_loc(pd.Timestamp(sig.bar_open))
     start = max(0, i_sig - n_before)
     end = min(len(df), i_sig + 1 + n_after)
     w = df.iloc[start:end]
     n = len(w)
-    x = np.arange(n)
+    x_ = np.arange(n)
     o, h, l, c = (w[k].to_numpy(float) for k in ("open", "high", "low", "close"))
-    pad = max(15, int(n * 0.24))
+    xs = i_sig - start
+    span = max(14, (n - 1 - xs) + 3)              # la boite de position couvre toutes les bougies suivantes
+    xe = xs + span
+    ax.set_xlim(-1, xe + 2)
+    mk = _brand("logo_mark.png")                   # filigrane discret (symbole du logo) sous les bougies
+    if mk is not None:
+        card.logo(bg, "logo_mark.png", CX + CW * 0.40, CY + CH * 0.20, 190, z=1.6, alpha=0.06)
 
-    fig = plt.figure(figsize=(12, 6.75), dpi=100, facecolor=BG)
-    ax = fig.add_axes([0.085, 0.10, 0.875, 0.70], facecolor=BG)
-    ax.set_xlim(-1, n + pad)
-
-    # echelle robuste : une mèche isolee ne doit pas aplatir tout le graphique
     lvls = [sig.entry, sig.sl, *sig.tps]
-    ymin = min(float(np.percentile(l, 1.5)), min(lvls)) - 0.2 * sig.atr
-    ymax = max(float(np.percentile(h, 98.5)), max(lvls)) + 0.2 * sig.atr
+    ymin = min(float(np.percentile(l, 1.5)), min(lvls)) - 0.25 * sig.atr
+    ymax = max(float(np.percentile(h, 98.5)), max(lvls)) + 0.25 * sig.atr
     ax.set_ylim(ymin, ymax)
     yr = ymax - ymin
 
-    # bougies
-    col = np.where(c >= o, GREEN, RED)
-    ax.vlines(x, l, h, colors=col, linewidth=1.0, zorder=3)
-    ax.bar(x, np.maximum(np.abs(c - o), yr * 0.0008), bottom=np.minimum(o, c), width=0.64, color=col, zorder=4)
+    col = np.where(c >= o, UP, DOWN)
+    ax.vlines(x_, l, h, colors=col, linewidth=1.5, zorder=3)
+    ax.bar(x_, np.maximum(np.abs(c - o), yr * 0.0012), bottom=np.minimum(o, c), width=0.66, color=col, zorder=4)
 
     # zone (OB / FVG)
     xb = max(0, w.index.searchsorted(pd.Timestamp(sig.zone_born)))
-    zc = GREEN if long_ else RED
-    ax.add_patch(Rectangle((xb - 0.4, sig.zone_lo), (i_sig - start) - xb + 0.9, sig.zone_hi - sig.zone_lo,
-                           fc=zc, ec=zc, alpha=0.22, lw=1.0, zorder=2))
+    ax.add_patch(Rectangle((xb - 0.45, sig.zone_lo), xs - xb + 1.0, sig.zone_hi - sig.zone_lo,
+                           fc=dir_col, ec=dir_col, alpha=0.20, lw=1.0, zorder=2))
     zname = ("Order Block " if sig.zone_kind == "OB" else "Fair Value Gap ") + ("haussier" if long_ else "baissier")
     zmid = (sig.zone_lo + sig.zone_hi) / 2
-    if xb > 16:      # assez de place a gauche de la zone
-        ax.text(xb - 1.8, zmid, zname, color=zc, fontsize=9.5, fontweight="bold", va="center", ha="right", zorder=6)
-    else:            # zone proche du bord gauche : etiquette au-dessus
-        ax.text(max(xb, 1), sig.zone_hi + yr * 0.012, zname, color=zc, fontsize=9.5, fontweight="bold", va="bottom", zorder=6)
+    zbox = dict(boxstyle="round,pad=0.3", fc="#080c12", ec=dir_col, lw=0.9, alpha=0.93)
+    if xb > 14:
+        ax.text(xb - 1.6, zmid, zname, color=dir_col, fontsize=10.5, fontweight="bold", va="center", ha="right", zorder=8, bbox=zbox)
+    else:
+        ax.text(max(xb, 1), sig.zone_hi + yr * 0.03, zname, color=dir_col, fontsize=10.5, fontweight="bold", va="bottom", zorder=8, bbox=zbox)
 
-    # position (risque / gain)
-    xs = i_sig - start
-    xr = n + pad - 1
-    ax.add_patch(Rectangle((xs, min(sig.entry, sig.sl)), xr - xs, abs(sig.entry - sig.sl), fc=RED, alpha=0.10, ec="none", zorder=1))
-    far = sig.tps[-1]
-    ax.add_patch(Rectangle((xs, min(sig.entry, far)), xr - xs, abs(far - sig.entry), fc=GREEN, alpha=0.07, ec="none", zorder=1))
+    # ---- position (risque / recompense), comme l'outil "position" d'une plateforme
     hit = (result or {}).get("hit", [False, False, False])
     stopped = (result or {}).get("stopped", False)
-    ax.hlines(sig.entry, xs - 0.5, xr, colors=WHITE, linestyles="--", linewidth=1.2, zorder=5)
-    ax.hlines(sig.sl, xs - 0.5, xr, colors=RED, linewidth=1.6, zorder=5)
-    labels = [(sig.entry, f"Entrée  {_pfmt(sig.entry, digits)}", WHITE), (sig.sl, f"SL  {_pfmt(sig.sl, digits)}" + ("  ✗" if stopped else ""), RED)]
+    ax.add_patch(Rectangle((xs, min(sig.entry, sig.sl)), span, abs(sig.entry - sig.sl), fc=DOWN, alpha=0.20, ec="none", zorder=1.5))
+    ax.add_patch(Rectangle((xs, min(sig.entry, sig.tps[-1])), span, abs(sig.tps[-1] - sig.entry), fc=UP, alpha=0.15, ec="none", zorder=1.5))
+    ax.hlines(sig.sl, xs, xe, colors=DOWN, linewidth=1.8, zorder=5)
+    ax.hlines(sig.entry, xs, xe, colors=WHITE, linewidth=1.6, zorder=5)
     for k, tp in enumerate(sig.tps):
-        ax.hlines(tp, xs - 0.5, xr, colors=GREEN, linestyles=":", linewidth=1.5 if not hit[k] else 2.4, zorder=5)
-        labels.append((tp, f"TP{k + 1}  {_pfmt(tp, digits)}" + ("  ✓" if hit[k] else f"   +{k + 1}R"), GREEN))
-    for ly, txt, cc, ry in _spread_labels(labels, yr * 0.042):
-        ax.text(n + 0.6, ly, txt, color=cc, fontsize=10.5, fontweight="bold", va="center", zorder=8,
-                bbox=dict(boxstyle="round,pad=0.25", fc=BG, ec=cc, lw=0.8))
-    # marqueur du signal
-    my = l[i_sig - start] - 0.5 * sig.atr if long_ else h[i_sig - start] + 0.5 * sig.atr
-    ax.scatter([xs], [my], marker="^" if long_ else "v", s=110, color=GOLD, zorder=9)
+        ax.hlines(tp, xs, xe, colors=UP, linestyles="-" if k == 2 else "--", linewidth=1.8 if (k == 2 or hit[k]) else 1.2, zorder=5, alpha=1 if (k == 2 or hit[k]) else 0.75)
+    marker_y = l[xs] - 0.45 * sig.atr if long_ else h[xs] + 0.45 * sig.atr
+    ax.scatter([xs], [marker_y], marker="^" if long_ else "v", s=150, color=GOLD, zorder=9, edgecolors="#06080c", linewidths=0.8)
+
+    # etiquettes dans les boites
+    up_y = (sig.entry + sig.tps[-1]) / 2
+    dn_y = (sig.entry + sig.sl) / 2
+    lbox = dict(boxstyle="round,pad=0.3", fc="#080c12", ec="none", alpha=0.82)
+    ax.text(xe - 0.5, up_y, f"OBJECTIF   {_dist(sig, sig.tps[-1])}  ·  +{rr:.0f}R", color=UP, fontsize=10.5, fontweight="bold",
+            va="center", ha="right", zorder=8, bbox=lbox)
+    ax.text(xe - 0.5, dn_y, f"RISQUE   {_dist(sig, sig.sl)}  ·  1R", color=DOWN, fontsize=10.5, fontweight="bold",
+            va="center", ha="right", zorder=8, bbox=lbox)
+
+    # ---- etiquettes de prix a droite (calquee au-dessus, coordonnees ecran)
+    fig_h = card.fig.get_figheight() * 100
+    tags = [(sig.sl, f"SL  {_pf(sig.sl, digits)}" + ("  ✗" if stopped else ""), DOWN, WHITE),
+            (sig.entry, f"ENTRÉE  {_pf(sig.entry, digits)}", WHITE, "#06080c")]
+    for k, tp in enumerate(sig.tps):
+        tags.append((tp, f"TP{k + 1}  {_pf(tp, digits)}" + ("  ✓" if hit[k] else ""), UP, "#06080c"))
+    pos = []
+    for price, label, fc, tc in tags:
+        px, py = ax.transData.transform((xe, price))
+        pos.append([fig_h - py, label, fc, tc])
+    pos.sort(key=lambda t: t[0])
+    for k in range(1, len(pos)):                      # anti-chevauchement (hauteur d'etiquette 26 px)
+        if pos[k][0] - pos[k - 1][0] < 28:
+            pos[k][0] = pos[k - 1][0] + 28
+    x_tag = ax.transData.transform((xe, ymin))[0] + 10
+    for py, label, fc, tc in pos:
+        card.rrect(ov, x_tag, py - 13, 168, 26, r=4, fc=fc, ec=fc, lw=0.5, z=21)
+        card.text(ov, x_tag + 10, py + 1, label, size=10.8, color=tc, weight="bold", z=22)
 
     # axes
-    ax.grid(color=GRID, linewidth=0.6, alpha=0.8)
-    ax.tick_params(colors=MUTED, labelsize=8.5, length=0)
+    ax.grid(color=GRID, linewidth=0.8)
+    ax.tick_params(colors=MUTED, labelsize=9.5, length=0, pad=8)
     for s in ax.spines.values():
         s.set_visible(False)
-    ticks = np.linspace(0, n - 1, 7).astype(int)
+    ticks = np.linspace(0, n - 1, 8).astype(int)
     ax.set_xticks(ticks)
     ax.set_xticklabels([w.index[t].strftime("%d/%m %Hh") for t in ticks])
-    ax.yaxis.tick_left()
-    ax.set_yticks(np.linspace(ymin, ymax, 7))
-    ax.set_yticklabels([_pfmt(v, digits) for v in np.linspace(ymin, ymax, 7)])
+    ax.set_yticks(np.linspace(ymin + 0.03 * yr, ymax - 0.03 * yr, 7))
+    ax.set_yticklabels([_pf(v, digits) for v in np.linspace(ymin + 0.03 * yr, ymax - 0.03 * yr, 7)])
 
-    # en-tete
-    tf = TF_LABEL.get(sig.tf, sig.tf)
-    fig.text(0.05, 0.925, f"{sig.display}", color=WHITE, fontsize=27, fontweight="bold", va="center")
-    fig.text(0.05 + 0.017 * len(sig.display) + 0.045, 0.925, f"·  {tf}", color=MUTED, fontsize=17, va="center")
-    _pill(fig, 0.05, 0.845, 0.085, 0.05, "ACHAT" if long_ else "VENTE", GREEN if long_ else RED, fs=13)
-    _pill(fig, 0.145, 0.845, 0.088, 0.05, f"Grade {sig.grade}", GOLD, fs=12)
-    when = pd.Timestamp(sig.signal_time).strftime("%d/%m/%Y  %H:%M UTC")
-    fig.text(0.248, 0.870, when, color=MUTED, fontsize=11, va="center")
-    fig.text(0.05, 0.045, f"{brand}  ·  {DISCLAIMER}", color=MUTED, fontsize=8.5, va="center")
-    _logo(fig)
-
-    # bandeau de resultat
+    # bandeau de resultat (cartes de suivi)
     if result:
-        fig.text(0.68, 0.905, result["label"], color=result.get("color", GOLD), fontsize=22, fontweight="bold",
-                 ha="center", va="center", zorder=10,
-                 bbox=dict(boxstyle="round,pad=0.4", fc=BG, ec=result.get("color", GOLD), lw=1.6))
+        rc = result.get("color", GOLD)
+        card.rrect(ov, CX + 100, CY + 24, 400, 92, r=12, fc="#070b10", ec=rc, lw=2.2, alpha=0.96, z=21)
+        card.text(ov, CX + 128, CY + 55, result["label"], size=25, color=rc, weight="bold", z=22)
         if "r" in result:
-            fig.text(0.68, 0.852, f"{result['r']:+.2f} R", color=result.get("color", GOLD), fontsize=15,
-                     ha="center", va="center", zorder=10)
+            card.text(ov, CX + 128, CY + 94, f"Résultat :  {result['r']:+.2f} R", size=15, color=WHITE, z=22)
 
-    fig.savefig(out_path, dpi=100, facecolor=BG)
-    plt.close(fig)
-    return out_path
+    # ---------------------------------------------------------------- tableau des niveaux
+    TY, TH = 616, 104
+    card.rrect(bg, 44, TY, 1512, TH, r=14, fc=PANEL, ec=BORDER, lw=1.0, z=1)
+    cells = [("ENTRÉE", _pf(sig.entry, digits), WHITE, "prix du signal", None),
+             ("STOP LOSS", _pf(sig.sl, digits), DOWN, "−" + _dist(sig, sig.sl), "stop" if stopped else None)]
+    for k, tp in enumerate(sig.tps):
+        cells.append((f"TAKE PROFIT {k + 1}", _pf(tp, digits), UP, "+" + _dist(sig, tp) + f"  ·  +{k + 1}R", "tp" if hit[k] else None))
+    cells.append(("RATIO R:R", f"1 : {rr:.0f}", GOLD, "risque / objectif", None))
+    cw = 1512 / len(cells)
+    for k, (lab, val, colr, sub, flag) in enumerate(cells):
+        cx = 44 + k * cw + cw / 2
+        if k:
+            bg.add_line(plt.Line2D([44 + k * cw] * 2, [TY + 16, TY + TH - 16], color=BORDER, lw=1.0, zorder=3))
+        card.text(bg, cx, TY + 24, _spaced(lab), size=9.6, color=MUTED, ha="center")
+        card.text(bg, cx, TY + 56, val, size=22, color=colr, weight="bold", ha="center")
+        if flag:
+            card.text(bg, cx, TY + 87, "✓  ATTEINT" if flag == "tp" else "✗  TOUCHÉ", size=11, color=GREEN if flag == "tp" else RED, weight="bold", ha="center")
+        else:
+            card.text(bg, cx, TY + 87, sub, size=10.5, color=MUTED, ha="center")
+
+    # ---------------------------------------------------------------- pastilles de confirmation
+    CYc = 736
+    scored = [("sweep", "Liquidité"), ("stack", "OB + FVG"), ("volume", "Volume Profile"),
+              ("momentum", "RSI"), ("discount", "Discount" if long_ else "Premium"), ("session", "Session")]
+    nsc = sum(1 for k, _ in scored if sig.checks.get(k))
+    lab_t = card.text(bg, 48, CYc + 21, _spaced("Confirmations") + f"   {nsc}/6", size=10, color=MUTED)
+    xx = 48 + card.width(lab_t) + 26
+    t = card.text(ov, xx + 16, CYc + 21, "4 conditions obligatoires  ✓", size=10.8, color=GOLD, weight="bold", z=23)
+    wch = card.width(t) + 32
+    card.rrect(ov, xx, CYc, wch, 42, r=21, fc="none", ec=GOLD, lw=1.3, z=22)
+    xx += wch + 12
+    for key, lab in scored:
+        ok = bool(sig.checks.get(key))
+        t = card.text(ov, xx + 16, CYc + 21, ("✓  " if ok else "✗  ") + lab, size=10.8, color=GREEN if ok else DIM, weight="bold" if ok else "normal", z=23)
+        wch = card.width(t) + 32
+        card.rrect(ov, xx, CYc, wch, 42, r=21, fc="#0e1a14" if ok else "none", ec="#1f6b45" if ok else "#232b36", lw=1.1, z=22)
+        xx += wch + 10
+
+    # ---------------------------------------------------------------- pied de page
+    card.legal(bg, 808)
+    card.text(bg, 44, 868, brand.upper() + "   ·   PRIX INDICATIFS : APPLIQUE LES DISTANCES À TON PROPRE PRIX D'ENTRÉE", size=8.8, color=DIM)
+    card.text(bg, W - 44, 868, sig.id, size=8.8, color=DIM, ha="right")
+    return card.save(out_path)
 
 
+# ------------------------------------------------------------------ carte de bilan
 def render_recap_card(title: str, subtitle: str, kpis: List[tuple], trades: List[dict],
                       curve: List[float], out_path: str, brand: str = "GOTA TRADING",
                       curve_label: str = "Résultat cumulé (en R)") -> str:
     """kpis : [(libelle, valeur, couleur)] ; trades : [{date, symbol, dir, outcome, r}] ; curve : R cumule."""
-    fig = plt.figure(figsize=(10.8, 13.5), dpi=100, facecolor=BG)
-    fig.text(0.07, 0.945, brand, color=GOLD, fontsize=15, fontweight="bold")
-    fig.text(0.07, 0.91, title, color=WHITE, fontsize=30, fontweight="bold")
-    fig.text(0.07, 0.882, subtitle, color=MUTED, fontsize=13)
-    _logo(fig, x=0.83, y=0.90, size=0.075)
+    W, H = 1080, 1350
+    card = Card(W, H)
+    bg = card.bg
+    ov = card.overlay()
 
-    # tuiles KPI
-    kw, gap = 0.205, 0.0217
+    lk = _brand("logo_lockup.png")
+    lwid = 132 * lk.shape[1] / lk.shape[0] if lk is not None else 0
+    card.logo(bg, "logo_lockup.png", (W - lwid) / 2, 46, 132)
+    t_title = card.text(bg, W / 2, 218, title, size=30, color=WHITE, weight="bold", ha="center")
+    fs = 30.0
+    while card.width(t_title) > W - 120 and fs > 14:          # le titre ne deborde jamais
+        fs -= 1
+        t_title.set_fontsize(fs)
+    card.text(bg, W / 2, 256, subtitle, size=13, color=MUTED, ha="center")
+
+    kw, gap = (W - 2 * 60 - 3 * 16) / 4, 16
     for k, (lab, val, cc) in enumerate(kpis[:4]):
-        x0 = 0.07 + k * (kw + gap)
-        fig.patches.append(FancyBboxPatch((x0, 0.775), kw, 0.085, boxstyle="round,pad=0.002,rounding_size=0.012",
-                                          transform=fig.transFigure, fc=PANEL, ec=GRID, lw=1.0))
-        fig.text(x0 + kw / 2, 0.83, str(val), ha="center", va="center", color=cc, fontsize=24, fontweight="bold")
-        fig.text(x0 + kw / 2, 0.792, lab, ha="center", va="center", color=MUTED, fontsize=10.5)
+        x0 = 60 + k * (kw + gap)
+        card.rrect(bg, x0, 292, kw, 118, r=14, fc=PANEL, ec=BORDER, lw=1.0, z=2)
+        card.text(bg, x0 + kw / 2, 337, str(val), size=27, color=cc, weight="bold", ha="center")
+        card.text(bg, x0 + kw / 2, 380, lab.upper(), size=9.4, color=MUTED, ha="center")
 
-    # courbe
-    ax = fig.add_axes([0.10, 0.455, 0.83, 0.28], facecolor=PANEL)
+    card.rrect(bg, 60, 434, W - 120, 330, r=14, fc=PANEL, ec=BORDER, lw=1.0, z=1)
+    ax = card.chart_axes(120, 480, W - 200, 250)
     if len(curve) >= 2:
         xs = np.arange(len(curve))
         up = curve[-1] >= 0
-        ax.plot(xs, curve, color=GREEN if up else RED, linewidth=2.4)
-        ax.fill_between(xs, curve, 0, color=GREEN if up else RED, alpha=0.12)
-        ax.axhline(0, color=MUTED, linewidth=0.8)
+        cc = UP if up else DOWN
+        ax.plot(xs, curve, color=cc, linewidth=2.6)
+        ax.fill_between(xs, curve, 0, color=cc, alpha=0.14)
+        ax.axhline(0, color=MUTED, linewidth=0.9)
     else:
-        ax.text(0.5, 0.5, "Pas encore assez de trades", color=MUTED, ha="center", va="center", transform=ax.transAxes, fontsize=13)
-    ax.set_title(curve_label, color=TXT, fontsize=12, loc="left", pad=10)
-    ax.grid(color=GRID, linewidth=0.6)
-    ax.tick_params(colors=MUTED, labelsize=9, length=0)
+        ax.text(0.5, 0.5, "Pas encore assez de trades clôturés", color=MUTED, ha="center", va="center", transform=ax.transAxes, fontsize=13)
+    ax.grid(color=GRID, linewidth=0.8)
+    ax.tick_params(colors=MUTED, labelsize=9.5, length=0)
     for s in ax.spines.values():
         s.set_visible(False)
+    card.text(bg, 86, 462, curve_label, size=12.5, color=TXT, weight="bold")
 
-    # liste des trades
-    fig.text(0.07, 0.415, "Derniers trades clôturés", color=TXT, fontsize=13, fontweight="bold")
-    y = 0.385
+    card.text(bg, 60, 806, _spaced("Derniers trades clôturés"), size=11, color=MUTED)
+    y = 842
     for t in trades[:9]:
         pos = t["r"] >= 0
-        cc = GREEN if pos else RED
-        fig.text(0.07, y, t["date"], color=MUTED, fontsize=11.5, va="center")
-        fig.text(0.24, y, t["symbol"], color=WHITE, fontsize=12.5, fontweight="bold", va="center")
-        fig.text(0.42, y, "ACHAT" if t["dir"] == "LONG" else "VENTE", color=GREEN if t["dir"] == "LONG" else RED,
-                 fontsize=11, fontweight="bold", va="center")
-        fig.text(0.60, y, t["outcome"], color=TXT, fontsize=11.5, va="center")
-        fig.text(0.93, y, f"{t['r']:+.2f} R", color=cc, fontsize=13, fontweight="bold", va="center", ha="right")
-        fig.add_artist(plt.Line2D([0.07, 0.93], [y - 0.017, y - 0.017], color=GRID, linewidth=0.7, transform=fig.transFigure))
-        y -= 0.036
-    fig.text(0.5, 0.045, DISCLAIMER, color=MUTED, fontsize=9.5, ha="center", va="center")
-    fig.text(0.5, 0.022, "Les résultats passés ne préjugent pas des résultats futurs. Pertes incluses, jamais masquées.",
-             color=MUTED, fontsize=9.5, ha="center", va="center")
-    fig.savefig(out_path, dpi=100, facecolor=BG)
-    plt.close(fig)
-    return out_path
+        card.text(bg, 64, y, t["date"], size=12, color=MUTED)
+        card.text(bg, 170, y, t["symbol"], size=13, color=WHITE, weight="bold")
+        card.text(bg, 340, y, "ACHAT" if t["dir"] == "LONG" else "VENTE", size=11, color=UP if t["dir"] == "LONG" else DOWN, weight="bold")
+        card.text(bg, 470, y, t["outcome"], size=12, color=TXT)
+        card.text(bg, W - 64, y, f"{t['r']:+.2f} R", size=13.5, color=UP if pos else DOWN, weight="bold", ha="right")
+        bg.add_line(plt.Line2D([60, W - 60], [y + 21, y + 21], color=GRID, lw=1.0, zorder=3))
+        y += 42
+    card.legal(bg, 1264, x=60, maxw=W - 120)
+    card.text(bg, W / 2, 1318, brand.upper() + "   ·   PERTES INCLUSES, JAMAIS MASQUÉES", size=8.8, color=DIM, ha="center")
+    return card.save(out_path)

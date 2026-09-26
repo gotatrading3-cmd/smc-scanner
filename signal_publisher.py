@@ -47,7 +47,10 @@ DEFAULT_CFG = {
         "Échanges avec la communauté",
     ],
 }
-DISCLAIMER = "⚠️ Éducatif — pas un conseil financier. Le trading comporte un risque de perte en capital."
+DISCLAIMER = ("⚠️ <b>Avertissement</b> : le trading comporte un risque élevé de perte en capital. Contenu informatif et "
+              "éducatif : il ne constitue ni un conseil en investissement, ni une recommandation personnalisée. "
+              "Les performances passées ne préjugent pas des performances futures.")
+SHORT_DISCLAIMER = "⚠️ Risque élevé de perte en capital · contenu informatif, pas un conseil en investissement."
 
 EDU_TIPS = [
     "💡 <b>L'Order Block (OB)</b>\nC'est la dernière bougie opposée avant un mouvement impulsif. Des ordres importants y sont souvent restés en attente : quand le prix revient, il réagit parfois. « Parfois » : on attend toujours une bougie de confirmation avant d'agir.",
@@ -209,15 +212,21 @@ class Publisher:
 
     # ------------------------------------------------------------ signaux
     def signal_parts(self, s: Signal, digits: int) -> tuple:
-        """(en-tete + niveaux, detail des confirmations + gestion). Deux blocs pour pouvoir couper proprement."""
+        """(legende du signal, detail textuel des confirmations). La legende est autonome (avertissement inclus) ;
+        le detail des confirmations est deja dans l'image, il sert de version texte."""
         long_ = s.direction == "LONG"
         f = lambda v: _pf(v, digits)
-        head = [f"{'🟢' if long_ else '🔴'} <b>{'ACHAT' if long_ else 'VENTE'} {html.escape(s.display)}</b> · {_tf(s.tf)} · <b>Grade {s.grade}</b>", "",
-                f"📍 Entrée <code>{f(s.entry)}</code>",
-                f"🛑 Stop <code>{f(s.sl)}</code>",
-                f"🎯 TP1 <code>{f(s.tps[0])}</code> · TP2 <code>{f(s.tps[1])}</code> · TP3 <code>{f(s.tps[2])}</code>",
-                _dist_line(s),
-                "<i>Prix indicatifs : applique ces distances à TON prix d'entrée chez ton courtier.</i>"]
+        rr = abs(s.tps[-1] - s.entry) / max(s.risk, 1e-12)
+        cap = [f"{'🟢' if long_ else '🔴'} <b>{'ACHAT' if long_ else 'VENTE'} {html.escape(s.display)}</b> · {_tf(s.tf)} · <b>Grade {s.grade}</b>",
+               f"📍 Entrée <code>{f(s.entry)}</code>   🛑 Stop <code>{f(s.sl)}</code>",
+               f"🎯 TP1 <code>{f(s.tps[0])}</code> · TP2 <code>{f(s.tps[1])}</code> · TP3 <code>{f(s.tps[2])}</code>",
+               f"⚖️ Ratio R:R <b>1 : {rr:.0f}</b> · risque conseillé : 1 % du capital maximum",
+               "",
+               "📌 Gestion : 40 % à TP1 (puis stop à l'entrée) · 30 % à TP2 · 30 % à TP3",
+               _dist_line(s),
+               "<i>Prix indicatifs : applique ces distances à ton propre prix d'entrée.</i>",
+               "",
+               DISCLAIMER]
         htf = "journalière" if s.tf == "240m" else "H4"
         ok_lines = [f"Tendance {htf} {'haussière' if long_ else 'baissière'}",
                     f"Retest {'Order Block' if s.zone_kind == 'OB' else 'Fair Value Gap'} frais + rejet"]
@@ -231,22 +240,19 @@ class Publisher:
         body += [f"• {t}" for t in ok_lines]
         if miss:
             body.append(f"▫️ Non remplies : {' · '.join(miss)}")
-        body += ["", "📌 40 % à TP1 (puis stop à l'entrée) · 30 % TP2 · 30 % TP3",
-                 "Risque conseillé : 1 % du capital maximum.", "", DISCLAIMER]
-        return "\n".join(head), "\n".join(body)
+        return "\n".join(cap), "\n".join(body)
 
     def signal_caption(self, s: Signal, digits: int) -> str:
-        head, body = self.signal_parts(s, digits)
-        return head + "\n\n" + body
+        cap, body = self.signal_parts(s, digits)
+        return cap + "\n\n" + body
 
     def post_signal(self, s: Signal, img_path: str, digits: int) -> Optional[int]:
-        head, body = self.signal_parts(s, digits)
-        full = head + "\n\n" + body
-        if len(self._tag() + full) <= 1000:                     # tient dans la legende de la photo
-            return self.send_photo(img_path, full, button=True)
-        mid = self.send_photo(img_path, head, button=True)      # sinon : photo + detail en reponse (jamais de HTML coupe)
+        cap, body = self.signal_parts(s, digits)
+        if len(self._tag() + cap) <= 1000:                       # cas normal : UN seul message (image + legende)
+            return self.send_photo(img_path, cap, button=True)
+        mid = self.send_photo(img_path, cap[: cap.rfind("\n\n")], button=True)   # securite : jamais de HTML coupe
         if mid:
-            self.send_text(body, reply_to=mid)
+            self.send_text(cap[cap.rfind("\n\n") + 2:], reply_to=mid)
         return mid
 
     def update_text(self, s: Signal, ev: dict, total_r: float) -> str:
@@ -268,7 +274,7 @@ class Publisher:
 
     def post_update(self, s: Signal, ev: dict, total_r: float, reply_to: Optional[int],
                     img_path: Optional[str] = None) -> Optional[int]:
-        text = self.update_text(s, ev, total_r) + f"\n\n{DISCLAIMER}"
+        text = self.update_text(s, ev, total_r) + f"\n\n{SHORT_DISCLAIMER}"
         if img_path and os.path.exists(img_path):
             return self.send_photo(img_path, text, reply_to=reply_to)
         return self.send_text(text, reply_to=reply_to)
