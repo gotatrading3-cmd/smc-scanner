@@ -47,6 +47,7 @@ DEFAULT_CFG = {
     "public_signals_per_day": 2,    # signaux montres en entier dans le groupe public (le VIP les recoit TOUS)
     "public_progress": True,        # suivi public des signaux montres (objectif atteint / stop touche) : gains ET pertes
     "public_daily_max": 14,         # plafond de posts programmes / jour dans le groupe public
+    "cta_every": 7,                 # 1 message public sur 7 porte l'invitation "nous ecrire" (les 6 autres n'en portent pas)
     "daily_recap": True,
     "weekly_recap": True,
     "button_text": "✉️ Nous écrire pour rejoindre le VIP",
@@ -102,7 +103,7 @@ def load_cfg() -> dict:
         if ev(name) is not None:
             cfg[key] = ev(name)
     for name, key in (("SIGNALS_MIN_SCORE", "min_score"), ("SIGNALS_MAX_PER_DAY", "max_signals_per_day"),
-                      ("PUBLIC_SIGNALS_PER_DAY", "public_signals_per_day")):
+                      ("PUBLIC_SIGNALS_PER_DAY", "public_signals_per_day"), ("CTA_EVERY", "cta_every")):
         if ev(name) is not None:
             try:
                 cfg[key] = int(ev(name))
@@ -176,6 +177,7 @@ class Publisher:
         self.target = dest if self.live else self.owner_chat
         self.enabled = bool(self.token and self.target)
         self.silent = str(os.environ.get("SIGNALS_SILENT", "")).strip().lower() in ("1", "true", "yes", "oui")
+        self.state: Optional[dict] = None               # etat du runner (compteur d'invitations cta_seq), branche par le runner
 
     # ------------------------------------------------------------ contact / marquage
     @property
@@ -267,19 +269,39 @@ class Publisher:
             return ""
         return f'👉 <a href="{html.escape(link, quote=True)}">Écris-nous pour rejoindre le groupe VIP</a>'
 
+    # ------------------------------------------------------------ rythme des invitations : 1 message sur cta_every
+    def cta_due(self) -> bool:
+        """True si le PROCHAIN message public doit porter l'invitation 'nous ecrire'. Les autres messages n'en portent pas :
+        par defaut 6 messages normaux, puis 1 avec l'invitation (cta_every = 7)."""
+        if self.state is None:
+            return True
+        return int(self.state.get("cta_seq", 0)) + 1 >= int(self.cfg.get("cta_every", 7) or 7)
+
+    def _tick(self, cta: bool) -> None:
+        if self.state is not None:
+            self.state["cta_seq"] = 0 if cta else int(self.state.get("cta_seq", 0)) + 1
+
     def post_public(self, text: str, img: Optional[str] = None, reply_to: Optional[int] = None, button: bool = True,
-                    notify: bool = False, account: bool = False) -> Optional[int]:
-        """Post du groupe PUBLIC. Image : le texte est suivi d'un lien cliquable pour nous ecrire (et du bouton).
-        notify=False : sans sonnerie (posts courants) ; notify=True : nouveau signal."""
+                    notify: bool = False, account: bool = False, cta: Optional[bool] = None) -> Optional[int]:
+        """Post du groupe PUBLIC. `cta` : le message porte l'invitation 'nous ecrire' (bouton + lien cliquable sous l'image) ;
+        par defaut 1 message sur 7 (cta_due), pour ne pas saturer le groupe. notify=False : sans sonnerie ; True : nouveau signal."""
+        if cta is None:
+            cta = self.cta_due()
+        button = button and cta
         if img and os.path.exists(img):
-            cta = self.cta_line()
-            cap = text if (not cta or str(self.cfg.get("contact_link", "")).strip() in text) else f"{text}\n\n{cta}"
-            if len(self._tag() + cap) > 1024:                  # legende trop longue : image + lien, puis le texte en reponse
-                mid = self.send_photo(img, cta, reply_to=reply_to, button=button, notify=notify)
-                self.send_text(text, reply_to=mid or reply_to, button=False, notify=False)
-                return mid
-            return self.send_photo(img, cap, reply_to=reply_to, button=button, notify=notify)
-        return self.send_text(text, reply_to=reply_to, button=button, notify=notify, account=account)
+            line = self.cta_line() if cta else ""
+            cap = text if (not line or str(self.cfg.get("contact_link", "")).strip() in text) else f"{text}\n\n{line}"
+            if len(self._tag() + cap) > 1024:                  # legende trop longue : image (+ lien), puis le texte en reponse
+                mid = self.send_photo(img, line, reply_to=reply_to, button=button, notify=notify)
+                if mid:
+                    self.send_text(text, reply_to=mid, button=False, notify=False)
+            else:
+                mid = self.send_photo(img, cap, reply_to=reply_to, button=button, notify=notify)
+        else:
+            mid = self.send_text(text, reply_to=reply_to, button=button, notify=notify, account=account)
+        if mid:
+            self._tick(cta)
+        return mid
 
     # ------------------------------------------------------------ verification (ne poste rien)
     def check_target(self) -> dict:

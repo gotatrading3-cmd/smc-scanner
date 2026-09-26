@@ -158,9 +158,12 @@ def tf_key_of(sig: Signal) -> str:
     return {60: "1h", 240: "4h"}[int(sig.tf.rstrip("m"))]
 
 
-def make_pubs(cfg: dict) -> tuple:
-    """(publieur VIP, publieur PUBLIC)."""
-    return Publisher(cfg, log=log, audience="vip"), Publisher(cfg, log=log, audience="public")
+def make_pubs(cfg: dict, st: Optional[dict] = None) -> tuple:
+    """(publieur VIP, publieur PUBLIC). L'etat `st` est branche sur le publieur public : il compte les messages pour ne mettre
+    l'invitation « nous ecrire » que sur 1 message sur 7."""
+    pub_vip, pub_pub = Publisher(cfg, log=log, audience="vip"), Publisher(cfg, log=log, audience="public")
+    pub_pub.state = st
+    return pub_vip, pub_pub
 
 
 # ------------------------------------------------------------------ exposition (garde-fou de correlation)
@@ -303,10 +306,11 @@ def publish_signal(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pubs: t
     if st["pub_sig"].get(day, 0) < int(cfg.get("public_signals_per_day", 2)):
         try:
             pimg = OUT_DIR / f"{sig.id}_public.png"
+            cta = pub_pub.cta_due()                            # l'invitation n'est sur l'image que 1 message sur 7
             render_signal_chart(df1, sig, str(pimg), digits=meta["digits"], brand=cfg["brand"],
-                                footer=content.footer("new"), contact=pub_pub.handle)
+                                footer=content.footer("new", 0.0, cta), contact=pub_pub.handle if cta else "")
             text = content.public_signal(st, sig.display, TF_LABEL.get(sig.tf, sig.tf), sig.direction)
-            public_id = pub_pub.post_public(text, img=str(pimg), notify=True)
+            public_id = pub_pub.post_public(text, img=str(pimg), notify=True, cta=cta)
             if public_id:
                 st["pub_sig"][day] = st["pub_sig"].get(day, 0) + 1
         except Exception as e:
@@ -405,9 +409,10 @@ def _public_progress(sig: Signal, ev: dict, sim: TradeSim, reply_to: Optional[in
         kind = ev["type"]
         r_ev = ev.get("r_at", sim.r)
         text = content.progress(st, kind, sig.display, r_ev)
-        img = (_result_image(sig, ev, sim, digits, cfg, footer=content.footer(kind, r_ev), contact=pub_pub.handle)
+        cta = pub_pub.cta_due()
+        img = (_result_image(sig, ev, sim, digits, cfg, footer=content.footer(kind, r_ev, cta), contact=pub_pub.handle if cta else "")
                if kind in _IMG_EVENTS else None)
-        pub_pub.post_public(text, img=img, reply_to=reply_to)
+        pub_pub.post_public(text, img=img, reply_to=reply_to, cta=cta)
     except Exception as e:
         log(f"[PUB] suivi public non publie ({e})")
 
@@ -530,6 +535,10 @@ def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
 
     n_sig, n_active = st["per_day"].get(today, 0), len(st["active"])
     watch = _watch_names(st)
+    # invitation a nous ecrire : c'est LE 7e message (les 6 precedents n'en portent pas). Dans l'apres-midi, ce 7e message est le
+    # post d'invitation dedie (une fois par jour) ; a d'autres heures, c'est un message normal qui porte le bouton / le lien.
+    if in_win(14, 0, 360) and can("cta", today) and pub_pub.cta_due():
+        push("cta", today, content.promo(st, cfg.get("vip_perks", []), handle) if wd in (1, 4) else content.cta(st, handle), cta=True)
     if wd < 5 and in_win(6, 30, 300) and can("morning", today):                           # point du matin (donnees reelles)
         push("morning", today, content.morning(st, _snapshot_cached(st, now), watch, handle))
     if in_win(7, 30, 420) and can("edu", today):                                          # conseil du jour
@@ -547,8 +556,6 @@ def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
         push("ny", today, content.new_york(st, n_sig, n_active, len(watch)))
     if wd == 2 and cfg.get("account_link") and in_win(14, 0, 240) and can("account", today):   # rappel : ouvrir un compte
         push("account", today, content.account(st), account=True)
-    if in_win(15, 0, 300) and can("cta", today):                                          # invitation a nous ecrire
-        push("cta", today, content.promo(st, cfg.get("vip_perks", []), handle) if wd in (1, 4) else content.cta(st, handle))
     if wd < 5 and in_win(16, 30, 150) and can("movers_pm", today):                        # mouvements du jour (apres-midi)
         push("movers_pm", today, _movers_text(st))
     if wd == 5 and in_win(9, 0, 300) and can("sat", today):                               # samedi
@@ -576,12 +583,12 @@ def post_now(kind: str) -> None:
     comme fait pour ce creneau : le calendrier ne le reposte pas. kind : edu, brief, ny, cta, promo, account, sat, sun,
     movers, crypto, scan."""
     cfg = load_cfg()
-    pub_pub = make_pubs(cfg)[1]
     if not connect(log=log):
         log("Source de donnees indisponible")
         return
     try:
         st = load_state()
+        pub_pub = make_pubs(cfg, st)[1]
         now = utc_now()
         today = str(now.date())
         handle = pub_pub.handle
@@ -592,8 +599,8 @@ def post_now(kind: str) -> None:
             "edu": ("edu", today, lambda: content.education(st), {}),
             "brief": ("morning", today, lambda: content.morning(st, _snapshot_cached(st, now), watch, handle), {}),
             "ny": ("ny", today, lambda: content.new_york(st, n_sig, n_active, len(watch)), {}),
-            "cta": ("cta", today, lambda: content.cta(st, handle), {}),
-            "promo": ("cta", today, lambda: content.promo(st, cfg.get("vip_perks", []), handle), {}),
+            "cta": ("cta", today, lambda: content.cta(st, handle), {"cta": True}),
+            "promo": ("cta", today, lambda: content.promo(st, cfg.get("vip_perks", []), handle), {"cta": True}),
             "account": ("account", today, lambda: content.account(st), {"account": True}),
             "sat": ("sat", today, lambda: content.weekend_saturday(st, handle), {}),
             "sun": ("sun", today, lambda: content.weekend_sunday(st, _snapshot_cached(st, now)), {}),
@@ -675,7 +682,7 @@ def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
 def loop(once: bool = False) -> None:
     cfg = load_cfg()
     log("=== GOTA SIGNAUX - DEMARRAGE ===")
-    pubs = make_pubs(cfg)
+    pubs = make_pubs(cfg)                                     # (apercu du mode ; l'etat est branche apres son chargement)
     log(f"  backend : {sd.BACKEND} | VIP : {'LIVE' if pubs[0].live else 'APERCU'} | PUBLIC : {'LIVE' if pubs[1].live else 'APERCU'}")
     log(f"  timeframe {cfg['timeframe']} (biais {HTF[cfg['timeframe']][0]}) | score min {cfg['min_score']}/6 | max {cfg['max_signals_per_day']}/jour")
     if not connect(log=log):
@@ -688,7 +695,7 @@ def loop(once: bool = False) -> None:
                 log("[PAUSE] signaux en pause - aucun scan")
             else:
                 cfg = load_cfg()
-                pubs = make_pubs(cfg)
+                pubs = make_pubs(cfg, st)
                 want = cfg.get("symbols") or []
                 ids = [i for i in available_ids() if not want or i in want]
                 run_cycle(st, cfg, pubs, ids)
@@ -757,12 +764,13 @@ def _post_example(pubs: tuple, cfg: dict, st: dict, sig: Signal, df1: pd.DataFra
             mid = pub_vip.post_signal(sig, str(img), meta["digits"])
     if do_public:
         pimg = OUT_DIR / f"demo_{sig.id}_public.png"
+        cta = pub_pub.cta_due()
         render_signal_chart(df1, sig, str(pimg), digits=meta["digits"], brand=cfg["brand"],
-                            footer=content.footer("new"), contact=pub_pub.handle)
+                            footer=content.footer("new", 0.0, cta), contact=pub_pub.handle if cta else "")
         log(f"[EXEMPLE] image PUBLIC : {pimg}")
         if send:
             pid = pub_pub.post_public(content.public_signal(st, sig.display, TF_LABEL.get(sig.tf, sig.tf), sig.direction),
-                                      img=str(pimg), notify=True)
+                                      img=str(pimg), notify=True, cta=cta)
     sim = TradeSim(sig)
     k0 = df1.index.get_loc(pd.Timestamp(sig.bar_open))
     shown = 0
@@ -774,20 +782,22 @@ def _post_example(pubs: tuple, cfg: dict, st: dict, sig: Signal, df1: pd.DataFra
                     if send:
                         pub_vip.post_update(sig, ev, sim.r, mid, p)
                 if do_public and cfg.get("public_progress", True):
-                    pp = _demo_result_image(df1, sig, ev, sim, meta["digits"], cfg, footer=content.footer(ev["type"], sim.r), contact=pub_pub.handle)
+                    cta = pub_pub.cta_due()
+                    pp = _demo_result_image(df1, sig, ev, sim, meta["digits"], cfg, footer=content.footer(ev["type"], sim.r, cta),
+                                            contact=pub_pub.handle if cta else "")
                     log(f"[EXEMPLE] image PUBLIC {ev['type']} : {pp}")
                     if send:
-                        pub_pub.post_public(content.progress(st, ev["type"], sig.display, sim.r), img=pp, reply_to=pid)
+                        pub_pub.post_public(content.progress(st, ev["type"], sig.display, sim.r), img=pp, reply_to=pid, cta=cta)
                 shown += 1
         if sim.closed:
             break
 
 
-def _preview_pubs(cfg: dict, native: bool = False) -> tuple:
+def _preview_pubs(cfg: dict, native: bool = False, st: Optional[dict] = None) -> tuple:
     """Deux publieurs forces en APERCU (destination = TON chat prive, sans sonnerie). native=True : aucune mention 'apercu'
     (rendu identique aux groupes)."""
     cfg = dict(cfg, live=False, public_live=False)
-    pubs = make_pubs(cfg)
+    pubs = make_pubs(cfg, st)
     for p in pubs:
         p.live, p.target = False, p.owner_chat
         if native:
@@ -798,8 +808,8 @@ def _preview_pubs(cfg: dict, native: bool = False) -> tuple:
 def demo() -> None:
     """Envoie UN exemple historique complet en APERCU (VIP + public)."""
     cfg = load_cfg()
-    pubs = _preview_pubs(cfg)
     st = load_state()
+    pubs = _preview_pubs(cfg, st=st)
     if not connect(log=log):
         log("Source de donnees indisponible")
         return
@@ -819,10 +829,11 @@ def followers_test() -> None:
     2/2 le groupe PUBLIC : les signaux montres en entier ("deja dans le VIP") + leur suivi (un gain, une perte) + le rythme de la journee.
     Exemples HISTORIQUES : rien n'est publie dans les vrais groupes."""
     cfg = load_cfg()
-    pubs = _preview_pubs(cfg, native=True)
-    pub_vip, pub_pub = pubs
     st = load_state()
     st["copy_idx"] = {}                                   # le test montre toujours les premieres variantes
+    st["cta_seq"] = 0                                     # ... et le rythme des invitations depuis le debut (1 message sur 7)
+    pubs = _preview_pubs(cfg, native=True, st=st)
+    pub_vip, pub_pub = pubs
     send = "--no-send" not in sys.argv
     if not connect(log=log):
         log("Source de donnees indisponible")
@@ -854,7 +865,7 @@ def followers_test() -> None:
         outs = [{"display": e[1].display, "label": _label_outcome(e[4].outcome), "r": e[4].r} for _, e in picks]
         pub_pub.post_public(content.evening(st, outs, 2, 0))
         pub_pub.post_public(content.education(st))
-        pub_pub.post_public(content.cta(st, pub_pub.handle))
+        pub_pub.post_public(content.cta(st, pub_pub.handle), cta=True)
     shutdown()
 
 
@@ -902,8 +913,8 @@ def main() -> None:
         return demo()
     if any(x in a for x in ("--brief", "--edu", "--cta", "--promo", "--account", "--recap", "--pinned")):
         cfg = load_cfg()
-        pub_vip, pub_pub = _preview_pubs(cfg)
         st = load_state()
+        pub_vip, pub_pub = _preview_pubs(cfg, st=st)
         now = utc_now()
         if "--pinned" in a:
             pub_vip.send_text(pinned_text(cfg["brand"], cfg.get("account_link", "")), account=True)
@@ -913,9 +924,9 @@ def main() -> None:
         if "--edu" in a:
             pub_pub.post_public(content.education(st))
         if "--cta" in a:
-            pub_pub.post_public(content.cta(st, pub_pub.handle))
+            pub_pub.post_public(content.cta(st, pub_pub.handle), cta=True)
         if "--promo" in a:
-            pub_pub.post_public(content.promo(st, cfg.get("vip_perks", []), pub_pub.handle))
+            pub_pub.post_public(content.promo(st, cfg.get("vip_perks", []), pub_pub.handle), cta=True)
         if "--account" in a:
             pub_pub.post_public(content.account(st), account=True)
         if "--recap" in a:

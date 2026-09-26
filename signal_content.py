@@ -50,14 +50,17 @@ def public_signal(st: dict, pair: str, tf: str, direction: str) -> str:
     return pick(st, "public_signal", v).format(**d)
 
 
-def footer(kind: str, r: float = 0.0) -> str:
-    """Texte de la barre d'invitation en bas des images publiques. kind : 'new' ou le type d'evenement ; r : resultat cumule
-    du trade (R). 'Deja en profit' seulement si le resultat est reellement positif."""
+def footer(kind: str, r: float = 0.0, cta: bool = True) -> str:
+    """Texte de la barre en bas des images publiques. kind : 'new' ou le type d'evenement ; r : resultat cumule du trade (R) ;
+    cta : ajoute l'invitation « écris-nous pour rejoindre » (1 message sur 7 seulement). 'Deja en profit' seulement si le
+    resultat est reellement positif."""
     if kind == "new":
-        return "Déjà envoyé dans le groupe VIP  ·  écris-nous pour rejoindre"
-    if r > 0.05:
-        return "Déjà en profit côté VIP  ·  écris-nous pour rejoindre"
-    return "Tous les signaux sont suivis en direct dans le VIP  ·  écris-nous pour rejoindre"
+        base = "Déjà envoyé dans le groupe VIP"
+    elif r > 0.05:
+        base = "Déjà en profit côté VIP"
+    else:
+        base = "Tous les signaux sont suivis en direct dans le VIP"
+    return base + ("  ·  écris-nous pour rejoindre" if cta else "")
 
 
 def progress(st: dict, kind: str, pair: str, r: float) -> str:
@@ -116,9 +119,9 @@ def morning(st: dict, snap: dict, watch: List[str], handle: str) -> str:
     d = dict(top=NAMES.get(t, t), top_pct=pct(tp), bot=NAMES.get(b, b), bot_pct=pct(bp), n=snap.get("n_pairs", 0),
              trend=_trend_line(snap), watch=_watch_line(watch), h=_handle(handle))
     v = [
-        "☀️ Bonjour la team ! Petit tour d'horizon avant l'ouverture.\n\nCôté devises, {top} est la plus forte de la semaine ({top_pct}) et {bot} la plus faible ({bot_pct}). {trend}\n\n{watch}\n\nDès qu'un setup se valide, vous le voyez ici — et le plan complet part dans le VIP ➜ {h}",
+        "☀️ Bonjour la team ! Petit tour d'horizon avant l'ouverture.\n\nCôté devises, {top} est la plus forte de la semaine ({top_pct}) et {bot} la plus faible ({bot_pct}). {trend}\n\n{watch}\n\nDès qu'un setup se valide, vous le voyez ici — et le plan complet part dans le VIP.",
         "🌅 Salut tout le monde ! Ce que je vois ce matin : {top} en tête ({top_pct}), {bot} en queue de peloton ({bot_pct}). {trend}\n\n{watch}\n\nOn vous tient au courant tout au long de la journée 💪",
-        "☕ Café en main, on scanne les {n} paires de devises.\n\n{top} domine cette semaine ({top_pct}), {bot} souffre ({bot_pct}). {trend}\n\n{watch}\n\nLe détail des signaux, comme d'habitude, c'est dans le VIP ➜ {h}",
+        "☕ Café en main, on scanne les {n} paires de devises.\n\n{top} domine cette semaine ({top_pct}), {bot} souffre ({bot_pct}). {trend}\n\n{watch}\n\nLe détail des signaux, comme d'habitude, c'est dans le VIP.",
     ]
     return pick(st, "morning", v).format(**d)
 
@@ -202,7 +205,7 @@ def weekend_saturday(st: dict, handle: str) -> str:
     h = _handle(handle)
     v = [
         "🌤 Week-end : le forex se repose, la crypto (BTC, ETH) continue de tourner et on garde un œil dessus. Profitez-en pour souffler — on revient en force lundi 💪",
-        "☀️ Bon samedi à tous ! Les marchés de devises sont fermés jusqu'à dimanche soir. Petit rappel : les signaux, l'analyse et le suivi complet, c'est dans le VIP ➜ {h}",
+        "☀️ Bon samedi à tous ! Les marchés de devises sont fermés jusqu'à dimanche soir. Petit rappel : les signaux, l'analyse et le suivi complet, c'est dans le VIP.",
     ]
     return pick(st, "sat", v).format(h=h)
 
