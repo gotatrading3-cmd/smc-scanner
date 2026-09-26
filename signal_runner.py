@@ -12,6 +12,7 @@ signal_runner.py - Canal de signaux GOTA Confluence, DEUX audiences. Tourne :
     python signal_runner.py --test          # TEST 'vue abonnes' (VIP puis public) dans ton chat prive
     python signal_runner.py --demo [--no-send]   # un exemple historique complet (apercu)
     python signal_runner.py --brief|--edu|--cta|--promo|--account|--recap|--pinned   # apercus de contenu (ton chat prive)
+    python signal_runner.py --post <type>   # poste MAINTENANT dans le groupe public : edu brief ny cta promo account sat sun movers crypto scan
     python signal_runner.py --post-pinned   # guide VIP + accueil public epingles (modifie les messages epingles s'ils existent)
     python signal_runner.py --check-channel # verifie que le bot peut publier dans les 2 groupes (ne poste rien)
 
@@ -421,7 +422,7 @@ def _stats_line(recs: List[dict]) -> str:
     s = summarize([{"r": r["r"], "outcome": r["outcome"]} for r in recs])
     if not s.get("n"):
         return "aucun trade clôturé"
-    return f"{s['n']} signal{'aux' if s['n'] > 1 else ''} · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · <b>{s['total_r']:+.1f}R</b>"
+    return f"{s['n']} {'signaux' if s['n'] > 1 else 'signal'} · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · <b>{s['total_r']:+.1f}R</b>"
 
 
 def build_recap_image(st: dict, hist: List[dict], now: pd.Timestamp, week_only: bool, cfg: dict) -> Optional[str]:
@@ -482,14 +483,29 @@ def _day_outcomes(day: pd.Timestamp, hist: List[dict]) -> List[dict]:
             for r in hist if str(r["close_time"])[:10] == str(day.date())]
 
 
+def _movers_text(st: dict) -> Optional[str]:
+    mv = market.movers()
+    return content.movers(st, mv) if (mv.get("up") or mv.get("down")) else None
+
+
+def _crypto_text(st: dict) -> Optional[str]:
+    c = market.crypto()
+    return content.crypto(st, c) if c else None
+
+
 def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
-    """Calendrier du groupe PUBLIC. Fenetres LARGES (le planificateur gratuit de GitHub peut espacer les executions).
-    Tout est reel : etat du marche calcule, resultats de l'historique. Un seul post de chaque type par jour."""
+    """Calendrier du groupe PUBLIC (heures UTC). Fenetres LARGES : un post part a la premiere execution qui tombe dedans (le
+    planificateur gratuit de GitHub peut espacer les executions). Tout est reel : marche calcule, resultats de l'historique.
+    Un post n'est marque 'fait' que si Telegram l'a accepte (sinon nouvel essai au cycle suivant).
+
+    semaine  : 06:30 point du matin | 07:30 conseil | 09:05, 13:05, 17:05 scan H4 | 10:30 et 16:30 mouvements du jour |
+               12:30 New York | 14:00 rappel compte (mercredi) | 15:00 invitation | 21:30 bilan (+ bilan de la semaine le vendredi)
+    week-end : 07:30 conseil | samedi 09:00 mot du week-end | 12:00 point crypto | 15:00 invitation | dimanche 17:30 plan de la semaine"""
     pub_vip, pub_pub = pubs
     sch, hm, wd = st["sched"], now.hour * 60 + now.minute, now.weekday()
     today = str(now.date())
     handle = pub_pub.handle
-    cap = int(cfg.get("public_daily_max", 12))
+    cap = int(cfg.get("public_daily_max", 14))
 
     def in_win(h: int, m: int, length: int) -> bool:
         s0 = h * 60 + m
@@ -504,52 +520,107 @@ def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
             return False
         return True
 
-    def done(kind: str, key: str) -> None:
-        sch[kind] = key
-        if kind not in st["previewed"]:
-            st["previewed"].append(kind)
-        st["pub_posts"][today] = st["pub_posts"].get(today, 0) + 1
+    def push(kind: str, key: str, text: Optional[str], **kw) -> None:
+        """Poste ; marque 'fait' seulement si Telegram a accepte le message."""
+        if text and pub_pub.post_public(text, **kw):
+            sch[kind] = key
+            if kind not in st["previewed"]:
+                st["previewed"].append(kind)
+            st["pub_posts"][today] = st["pub_posts"].get(today, 0) + 1
 
     n_sig, n_active = st["per_day"].get(today, 0), len(st["active"])
+    watch = _watch_names(st)
     if wd < 5 and in_win(6, 30, 300) and can("morning", today):                           # point du matin (donnees reelles)
-        pub_pub.post_public(content.morning(st, _snapshot_cached(st, now), _watch_names(st), handle))
-        done("morning", today)
-    if in_win(8, 30, 360) and can("edu", today):                                          # conseil du jour
-        pub_pub.post_public(content.education(st))
-        done("edu", today)
+        push("morning", today, content.morning(st, _snapshot_cached(st, now), watch, handle))
+    if in_win(7, 30, 420) and can("edu", today):                                          # conseil du jour
+        push("edu", today, content.education(st))
+    # compte rendu apres les clotures H4 de 09:00, 13:00 et 17:00 UTC (bougies ouvertes a 05, 09 et 13 h)
+    lb = [pd.Timestamp(v) for k, v in st.get("last_bar", {}).items() if v and UNIVERSE.get(k, {}).get("cls") == "fx"]
+    if wd < 5 and lb:
+        lo = max(lb)
+        if lo.hour in (5, 9, 13) and lo.normalize() == now.normalize() and (now - lo) < pd.Timedelta(hours=8) and can("scan", lo.isoformat()):
+            push("scan", lo.isoformat(), content.scan_report(st, (lo + pd.Timedelta(hours=4)).hour,
+                                                              int(st.get("n_symbols") or len(lb)), n_sig, n_active, watch))
+    if wd < 5 and in_win(10, 30, 120) and can("movers_am", today):                        # mouvements du jour (matin)
+        push("movers_am", today, _movers_text(st))
     if wd < 5 and in_win(12, 30, 240) and can("ny", today):                               # ouverture de New York
-        pub_pub.post_public(content.new_york(st, n_sig, n_active, len(_watch_names(st))))
-        done("ny", today)
-    if wd < 5 and in_win(17, 30, 210) and _watch_names(st) and can("watch", today):       # radar du soir (paires pres d'une zone)
-        pub_pub.post_public(content.watch(st, _watch_names(st)))
-        done("watch", today)
-    if wd == 2 and cfg.get("account_link") and in_win(13, 0, 300) and can("account", today):   # rappel : ouvrir un compte
-        pub_pub.post_public(content.account(st), account=True)
-        done("account", today)
+        push("ny", today, content.new_york(st, n_sig, n_active, len(watch)))
+    if wd == 2 and cfg.get("account_link") and in_win(14, 0, 240) and can("account", today):   # rappel : ouvrir un compte
+        push("account", today, content.account(st), account=True)
     if in_win(15, 0, 300) and can("cta", today):                                          # invitation a nous ecrire
-        if wd in (1, 4):
-            pub_pub.post_public(content.promo(st, cfg.get("vip_perks", []), handle))
-        else:
-            pub_pub.post_public(content.cta(st, handle))
-        done("cta", today)
+        push("cta", today, content.promo(st, cfg.get("vip_perks", []), handle) if wd in (1, 4) else content.cta(st, handle))
+    if wd < 5 and in_win(16, 30, 150) and can("movers_pm", today):                        # mouvements du jour (apres-midi)
+        push("movers_pm", today, _movers_text(st))
     if wd == 5 and in_win(9, 0, 300) and can("sat", today):                               # samedi
-        pub_pub.post_public(content.weekend_saturday(st, handle))
-        done("sat", today)
+        push("sat", today, content.weekend_saturday(st, handle))
+    if wd >= 5 and in_win(12, 0, 240) and can("crypto", today):                           # point crypto du week-end
+        push("crypto", today, _crypto_text(st))
     if wd == 6 and in_win(17, 30, 240) and can("sun", today):                             # dimanche soir : plan de la semaine
-        pub_pub.post_public(content.weekend_sunday(st, _snapshot_cached(st, now)))
-        done("sun", today)
+        push("sun", today, content.weekend_sunday(st, _snapshot_cached(st, now)))
 
     # bilans : journee de trading qui vient de finir (fenetre 21:30 -> 05:30 UTC le lendemain)
     rd = now.normalize() if hm >= 21 * 60 + 30 else ((now - pd.Timedelta(days=1)).normalize() if hm < 5 * 60 + 30 else None)
     if rd is not None and rd.weekday() < 5:
         dkey = str(rd.date())
         if cfg.get("daily_recap") and can("evening", dkey):
-            pub_pub.post_public(content.evening(st, _day_outcomes(rd, scoped_history(pubs)), st["per_day"].get(dkey, 0), n_active))
-            done("evening", dkey)
+            push("evening", dkey, content.evening(st, _day_outcomes(rd, scoped_history(pubs)), st["per_day"].get(dkey, 0), n_active))
         wkey = f"{rd.isocalendar()[0]}-W{rd.isocalendar()[1]}"
         if cfg.get("weekly_recap") and rd.weekday() == 4 and can("weekly", wkey):
-            post_weekly_recap(st, pubs, cfg, now)
-            done("weekly", wkey)
+            if post_weekly_recap(st, pubs, cfg, now):
+                sch["weekly"] = wkey
+                st["pub_posts"][today] = st["pub_posts"].get(today, 0) + 1
+
+
+def post_now(kind: str) -> None:
+    """Poste TOUT DE SUITE un contenu dans le groupe public (reel si PUBLIC_LIVE, sinon apercu dans ton chat) et le marque
+    comme fait pour ce creneau : le calendrier ne le reposte pas. kind : edu, brief, ny, cta, promo, account, sat, sun,
+    movers, crypto, scan."""
+    cfg = load_cfg()
+    pub_pub = make_pubs(cfg)[1]
+    if not connect(log=log):
+        log("Source de donnees indisponible")
+        return
+    try:
+        st = load_state()
+        now = utc_now()
+        today = str(now.date())
+        handle = pub_pub.handle
+        watch = _watch_names(st)
+        n_sig, n_active = st["per_day"].get(today, 0), len(st["active"])
+        lb = [pd.Timestamp(v) for k, v in st.get("last_bar", {}).items() if v and UNIVERSE.get(k, {}).get("cls") == "fx"]
+        specs = {
+            "edu": ("edu", today, lambda: content.education(st), {}),
+            "brief": ("morning", today, lambda: content.morning(st, _snapshot_cached(st, now), watch, handle), {}),
+            "ny": ("ny", today, lambda: content.new_york(st, n_sig, n_active, len(watch)), {}),
+            "cta": ("cta", today, lambda: content.cta(st, handle), {}),
+            "promo": ("cta", today, lambda: content.promo(st, cfg.get("vip_perks", []), handle), {}),
+            "account": ("account", today, lambda: content.account(st), {"account": True}),
+            "sat": ("sat", today, lambda: content.weekend_saturday(st, handle), {}),
+            "sun": ("sun", today, lambda: content.weekend_sunday(st, _snapshot_cached(st, now)), {}),
+            "movers": ("movers_am" if now.hour < 14 else "movers_pm", today, lambda: _movers_text(st), {}),
+            "crypto": ("crypto", today, lambda: _crypto_text(st), {}),
+        }
+        if lb:
+            lo = max(lb)
+            specs["scan"] = ("scan", lo.isoformat(), lambda: content.scan_report(
+                st, (lo + pd.Timedelta(hours=4)).hour, int(st.get("n_symbols") or len(lb)), n_sig, n_active, watch), {})
+        if kind not in specs:
+            log(f"Type inconnu : '{kind}'. Types : {', '.join(sorted(specs))}")
+            return
+        sched_kind, key, build, opts = specs[kind]
+        text = build()
+        if not text:
+            log(f"[POST] '{kind}' : donnees indisponibles, rien publie")
+            return
+        if pub_pub.post_public(text, **opts):
+            st["sched"][sched_kind] = key
+            st["pub_posts"][today] = st["pub_posts"].get(today, 0) + 1
+            log(f"[POST] '{kind}' publie ({'LIVE' if pub_pub.live else 'APERCU'})")
+        else:
+            log(f"[POST] '{kind}' : Telegram a refuse le message")
+        save_state(st)
+    finally:
+        shutdown()
 
 
 # ------------------------------------------------------------------ cycle principal
@@ -564,6 +635,7 @@ def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
 def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
     now = utc_now()
     _stats["ok"] = _stats["fail"] = 0
+    st["n_symbols"] = len(ids)
     try:
         update_active(st, pubs, cfg)
     except Exception as e:                                    # un suivi en erreur ne bloque pas le scan
@@ -800,7 +872,7 @@ def setup_wizard() -> None:
 
 
 KNOWN_ARGS = {"--once", "--setup", "--check-channel", "--test", "--demo", "--brief", "--edu", "--cta", "--promo", "--recap",
-              "--pinned", "--post-pinned", "--account", "--no-send"}
+              "--pinned", "--post-pinned", "--post", "--account", "--no-send"}
 
 
 def main() -> None:
@@ -816,6 +888,9 @@ def main() -> None:
         for aud in ("vip", "public"):
             print(Publisher(cfg, audience=aud).check_target()["detail"])
         return
+    if "--post" in a:                                         # poste tout de suite un contenu du groupe public
+        i = a.index("--post")
+        return post_now(a[i + 1] if i + 1 < len(a) else "")
     if "--post-pinned" in a:                                  # guide VIP + accueil public, epingles (reel si le groupe est en direct)
         pub_vip, pub_pub = make_pubs(load_cfg())
         pub_vip.post_pinned()

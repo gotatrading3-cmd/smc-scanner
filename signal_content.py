@@ -123,20 +123,47 @@ def morning(st: dict, snap: dict, watch: List[str], handle: str) -> str:
     return pick(st, "morning", v).format(**d)
 
 
-def watch(st: dict, names: List[str]) -> str:
-    """Radar du soir : paires dont le prix approche d'une zone d'interet (donnees reelles du scan, aucun niveau)."""
-    d = dict(liste=", ".join(names[:6]), k=len(names), s="s" if len(names) > 1 else "")
+def _p2(x: float) -> str:
+    return f"{x:+.2f} %".replace(".", ",")
+
+
+def scan_report(st: dict, hh: int, n_symbols: int, n_sig: int, n_active: int, watch: List[str]) -> str:
+    """Compte rendu apres chaque cloture H4 (donnees reelles du scan) : marches analyses, signaux du jour, paires pres d'une zone."""
+    a = _activity(n_sig, n_active, 0)
     v = [
-        "👀 On garde l'œil sur {liste} : le prix s'approche d'une zone qui nous intéresse. Si un setup se valide, le plan complet part directement dans le VIP.",
-        "🔎 Ce soir, {k} paire{s} sous surveillance : {liste}. Rien n'est validé pour l'instant — on attend la confirmation, comme toujours.",
-        "📡 Radar du soir : {liste}. Le prix approche d'une zone d'intérêt ; on vous prévient ici dès que ça bouge.",
+        "🔍 Scan H4 de {hh}:00 UTC terminé : {n} marchés analysés. {a}",
+        "📡 Nouvelle bougie H4 ({hh}:00 UTC) : on vient de repasser {n} marchés en revue. {a}",
+        "🧭 Point après la clôture H4 de {hh}:00 UTC — {n} marchés scannés. {a}",
     ]
-    return pick(st, "watch", v).format(**d)
+    text = pick(st, "scan", v).format(hh=f"{hh:02d}", n=n_symbols, a=a)
+    return text + (f"\n\n{_watch_line(watch)}" if watch else "")
+
+
+def movers(st: dict, mv: dict) -> str:
+    """Plus gros mouvements du jour sur les paires FX (donnees reelles)."""
+    def fmt(rows) -> str:
+        return " · ".join(f"{s} {_p2(p)}" for s, p in rows)
+    head = pick(st, "movers", ["📈 Mouvements du jour (depuis 00:00 UTC) :", "🔥 Ce qui bouge depuis minuit (UTC) :",
+                               "👀 Les paires les plus actives aujourd'hui :"])
+    lines = ([f"▲ {fmt(mv['up'])}"] if mv.get("up") else []) + ([f"▼ {fmt(mv['down'])}"] if mv.get("down") else [])
+    return head + "\n" + "\n".join(lines)
+
+
+def crypto(st: dict, c: dict) -> str:
+    """Point crypto du week-end : BTC / ETH, prix et variation sur 24 h (donnees reelles, indicatives)."""
+    parts = []
+    for name, sid in (("BTC", "BTCUSD"), ("ETH", "ETHUSD")):
+        if sid in c:
+            price, chg = c[sid]
+            parts.append(f"{name} {price:,.0f} $".replace(",", " ") + f" ({_p2(chg)} sur 24 h)")
+    head = pick(st, "crypto", ["₿ Le forex se repose, pas la crypto :", "🌐 Pendant que les devises dorment, la crypto continue :",
+                               "🪙 Point crypto du week-end :"])
+    return head + "\n" + " · ".join(parts)
 
 
 def _activity(n_sig: int, n_active: int, n_watch: int) -> str:
     if n_sig:
-        s = f"Depuis ce matin : {n_sig} signal{'aux' if n_sig > 1 else ''} envoyé{'s' if n_sig > 1 else ''} au VIP"
+        s = f"Depuis ce matin : {n_sig} {'signaux' if n_sig > 1 else 'signal'} envoyé{'s' if n_sig > 1 else ''} au VIP"
         if n_active:
             s += f", {n_active} trade{'s' if n_active > 1 else ''} en cours"
         return s + "."

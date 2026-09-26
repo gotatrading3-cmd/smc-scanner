@@ -50,3 +50,37 @@ def snapshot(ids: Optional[List[str]] = None, days: int = 5) -> dict:
 
 def pct(x: float) -> str:
     return f"{x:+.1f} %".replace(".", ",")
+
+
+def movers(ids: Optional[List[str]] = None, top: int = 3) -> dict:
+    """Plus gros mouvements des paires FX depuis 00:00 UTC (bougies H1 reelles). Ne plante jamais."""
+    ids = [i for i in (ids or available_ids()) if UNIVERSE[i]["cls"] == "fx"]
+    rows = []
+    for sid in ids:
+        try:
+            d = get_rates(sid, "1h", 60)
+            if d is None or len(d) < 4:
+                continue
+            day = d[d.index >= d.index[-1].normalize()]
+            if len(day) < 2:
+                continue
+            rows.append((sid, float(day["close"].iloc[-1] / day["open"].iloc[0] - 1.0) * 100.0))
+        except Exception:
+            continue
+    rows.sort(key=lambda t: t[1], reverse=True)
+    return {"up": [r for r in rows[:top] if r[1] > 0.02], "down": [r for r in rows[::-1][:top] if r[1] < -0.02], "n": len(rows)}
+
+
+def crypto() -> dict:
+    """BTC / ETH : dernier prix et variation sur 24 h (bougies H1 reelles). {} si indisponible."""
+    out = {}
+    for sid in ("BTCUSD", "ETHUSD"):
+        try:
+            d = get_rates(sid, "1h", 60)
+            if d is None or len(d) < 26:
+                continue
+            last, ref = float(d["close"].iloc[-1]), float(d["close"].iloc[-25])
+            out[sid] = (last, (last / ref - 1.0) * 100.0)
+        except Exception:
+            continue
+    return out

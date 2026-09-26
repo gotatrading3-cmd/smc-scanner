@@ -46,7 +46,7 @@ DEFAULT_CFG = {
     "max_active": 10,
     "public_signals_per_day": 2,    # signaux montres en entier dans le groupe public (le VIP les recoit TOUS)
     "public_progress": True,        # suivi public des signaux montres (objectif atteint / stop touche) : gains ET pertes
-    "public_daily_max": 12,         # plafond de posts programmes / jour dans le groupe public
+    "public_daily_max": 14,         # plafond de posts programmes / jour dans le groupe public
     "daily_recap": True,
     "weekly_recap": True,
     "button_text": "✉️ Nous écrire pour rejoindre le VIP",

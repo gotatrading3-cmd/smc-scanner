@@ -11,10 +11,14 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "scan = cycle normal | guides = guide VIP + accueil public epingles (modifie les messages epingles) | test = test vue abonnes | demo | brief | edu | cta | promo | account | recap | pinned = apercus"
+        description: "scan = cycle normal | post = poste maintenant (voir kind) | guides = guide VIP + accueil public epingles (modifie les messages epingles) | test = test vue abonnes | demo | brief | edu | cta | promo | account | recap | pinned = apercus"
         type: choice
         default: scan
-        options: [scan, guides, test, demo, brief, edu, cta, promo, account, recap, pinned]
+        options: [scan, post, guides, test, demo, brief, edu, cta, promo, account, recap, pinned]
+      kind:
+        description: "pour action=post (poste MAINTENANT dans le groupe public) : edu | brief | ny | cta | promo | account | sat | sun | movers | crypto | scan"
+        type: string
+        default: ""
 
 concurrency:
   group: gota-signals
@@ -69,8 +73,10 @@ jobs:
       - name: Executer
         env:
           ACTION: ${{ github.event.inputs.action || 'scan' }}
+          KIND: ${{ github.event.inputs.kind }}
         run: |
           case "$ACTION" in
+            post)   python signal_runner.py --post "$KIND" ;;
             guides) python signal_runner.py --post-pinned ;;
             test)   python signal_runner.py --test ;;
             demo)   python signal_runner.py --demo ;;
