@@ -338,7 +338,10 @@ def update_active(st: dict, pubs: tuple, cfg: dict) -> None:
             bars = bars[bars.index > pd.Timestamp(sim.last_ts)]
         events: List[dict] = []
         for ts, row in bars.iterrows():
-            events += sim.feed(ts, float(row["high"]), float(row["low"]), float(row["close"]), bar_minutes=5)
+            new = sim.feed(ts, float(row["high"]), float(row["low"]), float(row["close"]), bar_minutes=5)
+            for ev in new:                                     # etat du trade AU MOMENT de l'evenement (execution en retard : plusieurs d'un coup)
+                ev["r_at"], ev["hit_at"] = sim.r, list(sim.hit)
+            events += new
             if sim.closed:
                 break
         rec["sim"] = sim.to_dict()
@@ -347,7 +350,7 @@ def update_active(st: dict, pubs: tuple, cfg: dict) -> None:
         for ev in events:
             if not orphan:
                 img = _result_image(sig, ev, sim, rec["digits"], cfg) if ev["type"] in _IMG_EVENTS else None
-                pub_vip.post_update(sig, ev, sim.r, rec["msg_id"], img)                   # VIP : suivi detaille
+                pub_vip.post_update(sig, ev, ev.get("r_at", sim.r), rec["msg_id"], img)   # VIP : suivi detaille
                 if rec.get("public_msg_id") and cfg.get("public_progress", True):         # PUBLIC : seulement les signaux montres
                     _public_progress(sig, ev, sim, rec["public_msg_id"], rec["digits"], st, pub_pub, cfg)
             logp("[SUIVI] evenement" + (" (apercu, non publie)" if orphan else ""), f"{sig.display} {ev['type']} (R cumule {sim.r:+.2f})")
@@ -366,12 +369,15 @@ _LABELS = {"TP1": ("TP1 ATTEINT", GREEN), "TP3": ("TP3 ATTEINT", GREEN), "SL": (
 _IMG_EVENTS = tuple(_LABELS)                     # evenements qui ont une carte de resultat (TP2 : texte seul)
 
 
-def _result_payload(ev_type: str, sim: TradeSim) -> dict:
-    """Bandeau de la carte de resultat : a TP1 on annonce +1R sur 40 % ; le resultat TOTAL n'apparait qu'a la cloture."""
+def _result_payload(ev: dict, sim: TradeSim) -> dict:
+    """Bandeau de la carte de resultat : a TP1 on annonce +1R sur 40 % ; le resultat TOTAL n'apparait qu'a la cloture.
+    Utilise l'etat du trade AU MOMENT de l'evenement (r_at / hit_at) quand il est connu."""
+    ev_type = ev["type"]
+    r_ev, hit = ev.get("r_at", sim.r), ev.get("hit_at", list(sim.hit))
     label, color = _LABELS.get(ev_type, (ev_type, GOLD))
     sub = "+1R sur 40 % · stop à l'entrée" if ev_type == "TP1" else (
-        f"Résultat : {sim.r:+.2f} R" if ev_type == "SL" else f"Résultat final : {sim.r:+.2f} R")
-    return {"label": label, "r": sim.r, "sub": sub, "color": color, "hit": list(sim.hit), "stopped": ev_type == "SL"}
+        f"Résultat : {r_ev:+.2f} R" if ev_type == "SL" else f"Résultat final : {r_ev:+.2f} R")
+    return {"label": label, "r": r_ev, "sub": sub, "color": color, "hit": hit, "stopped": ev_type == "SL"}
 
 
 def _result_image(sig: Signal, ev: dict, sim: TradeSim, digits: int, cfg: dict, footer: str = "", contact: str = "") -> Optional[str]:
@@ -384,7 +390,7 @@ def _result_image(sig: Signal, ev: dict, sim: TradeSim, digits: int, cfg: dict, 
         OUT_DIR.mkdir(exist_ok=True)
         p = OUT_DIR / f"{sig.id}_{ev['type']}{'_public' if footer else ''}.png"
         render_signal_chart(df, sig, str(p), digits=digits, n_after=min(len(df) - 1 - k, 40), brand=cfg["brand"],
-                            result=_result_payload(ev["type"], sim), footer=footer, contact=contact)
+                            result=_result_payload(ev, sim), footer=footer, contact=contact)
         return str(p)
     except Exception as e:
         log(f"[IMG] resultat sans image ({e})")
@@ -396,8 +402,9 @@ def _public_progress(sig: Signal, ev: dict, sim: TradeSim, reply_to: Optional[in
     """Suivi PUBLIC d'un signal montre (gains ET pertes, meme traitement) : texte humain + carte de resultat + lien."""
     try:
         kind = ev["type"]
-        text = content.progress(st, kind, sig.display, sim.r)
-        img = (_result_image(sig, ev, sim, digits, cfg, footer=content.footer(kind, sim.r), contact=pub_pub.handle)
+        r_ev = ev.get("r_at", sim.r)
+        text = content.progress(st, kind, sig.display, r_ev)
+        img = (_result_image(sig, ev, sim, digits, cfg, footer=content.footer(kind, r_ev), contact=pub_pub.handle)
                if kind in _IMG_EVENTS else None)
         pub_pub.post_public(text, img=img, reply_to=reply_to)
     except Exception as e:
@@ -660,7 +667,7 @@ def _demo_result_image(df, sig, ev, sim, digits, cfg, footer: str = "", contact:
     j = df.index.get_loc(tev) if tev in df.index else len(df) - 1
     p = OUT_DIR / f"demo_{sig.id}_{ev['type']}{'_public' if footer else ''}.png"
     render_signal_chart(df.iloc[: j + 1], sig, str(p), digits=digits, n_after=min(j - k, 40), brand=cfg["brand"],
-                        result=_result_payload(ev["type"], sim), footer=footer, contact=contact)
+                        result=_result_payload(ev, sim), footer=footer, contact=contact)
     return str(p)
 
 
