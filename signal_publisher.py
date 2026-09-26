@@ -25,6 +25,7 @@ import requests
 from notifier import TelegramNotifier
 from signal_engine import Signal, CHECK_LABELS, SCORED
 from signal_data import symbol_meta, UNIVERSE
+from signal_content import account_block, welcome
 
 DIR = Path(__file__).parent
 CHANNEL_CFG = DIR / "channel.json"
@@ -34,6 +35,8 @@ DEFAULT_CFG = {
     "vip_chat_id": "",              # groupe / canal VIP (prive)
     "channel_id": "",               # groupe public
     "contact_link": "",             # https://t.me/<utilisateur> : bouton "nous ecrire" (groupe public uniquement)
+    "account_link": "",             # lien partenaire d'ouverture de compte de trading (messages epingles + rappel hebdomadaire)
+    "account_button_text": "💼 Ouvrir un compte de trading",
     "private_link": "",             # lien d'invitation du VIP : n'est JAMAIS publie
     "brand": "GOTA TRADING",
     "timeframe": "4h",              # timeframe d'entree (biais de tendance : D1 pour 4h, H4 pour 1h)
@@ -60,7 +63,7 @@ CHANNEL_ABOUT_PUBLIC = ("Analyse des marchés en continu : quelques signaux en d
                         "Tous les signaux, l'analyse détaillée et le suivi complet sont dans le groupe VIP : écris-nous pour le rejoindre.")
 
 
-def pinned_text(brand: str = "GOTA TRADING") -> str:
+def pinned_text(brand: str = "GOTA TRADING", account_link: str = "") -> str:
     """Guide du groupe VIP a epingler une fois (sans avertissement)."""
     return (f"📌 <b>{html.escape(brand)} — groupe VIP : mode d'emploi</b>\n\n"
             "Pour chaque signal, tu reçois :\n"
@@ -71,7 +74,8 @@ def pinned_text(brand: str = "GOTA TRADING") -> str:
             "• 40 % à TP1 (puis stop à l'entrée) · 30 % à TP2 · 30 % à TP3\n"
             "• Risque conseillé : 1 % du capital maximum par trade\n"
             "• 1R = la perte prévue si le stop est touché\n"
-            "• Prix indicatifs : applique les distances (pips / points) à ton propre prix d'entrée")
+            "• Prix indicatifs : applique les distances (pips / points) à ton propre prix d'entrée"
+            + account_block(account_link))
 
 
 def load_cfg() -> dict:
@@ -93,6 +97,7 @@ def load_cfg() -> dict:
         if ev(name) is not None:
             cfg[key] = ev(name).lower() in truthy
     for name, key in (("VIP_CHAT_ID", "vip_chat_id"), ("CHANNEL_ID", "channel_id"), ("CONTACT_LINK", "contact_link"),
+                      ("ACCOUNT_LINK", "account_link"),
                       ("PRIVATE_LINK", "private_link"), ("SIGNALS_BRAND", "brand"), ("SIGNALS_TF", "timeframe")):
         if ev(name) is not None:
             cfg[key] = ev(name)
@@ -186,11 +191,16 @@ class Publisher:
         who = "groupe VIP" if self.audience == "vip" else "groupe public"
         return f"🧪 <b>APERÇU · {who}</b> · visible uniquement par toi\n\n"
 
-    def _markup(self, with_button: bool) -> Optional[str]:
+    def _markup(self, with_button: bool, account: bool = False) -> Optional[str]:
+        """Boutons sous le message : 'nous ecrire' (groupe public) et/ou 'ouvrir un compte' (messages epingles, rappel)."""
+        rows = []
         link = str(self.cfg.get("contact_link", "")).strip()
         if with_button and self.audience == "public" and link.startswith("http"):
-            return json.dumps({"inline_keyboard": [[{"text": self.cfg["button_text"], "url": link}]]})
-        return None
+            rows.append([{"text": self.cfg["button_text"], "url": link}])
+        acc = str(self.cfg.get("account_link", "")).strip()
+        if account and acc.startswith("http"):
+            rows.insert(0, [{"text": self.cfg.get("account_button_text") or "💼 Ouvrir un compte de trading", "url": acc}])
+        return json.dumps({"inline_keyboard": rows}) if rows else None
 
     # ------------------------------------------------------------ bas niveau
     def _api(self, method: str, data: dict, files: Optional[dict] = None, retry: bool = True):
@@ -222,14 +232,15 @@ class Publisher:
         """Envoi silencieux (sans sonnerie) : apercus, tests de nuit (SIGNALS_SILENT) et posts courants du groupe public."""
         return (not notify) or (not self.live) or self.silent
 
-    def send_text(self, text: str, reply_to: Optional[int] = None, button: bool = False, notify: bool = True) -> Optional[int]:
+    def send_text(self, text: str, reply_to: Optional[int] = None, button: bool = False, notify: bool = True,
+                  account: bool = False) -> Optional[int]:
         data = {"chat_id": self.target, "text": self._tag() + text, "parse_mode": "HTML", "disable_web_page_preview": "true"}
         if self._quiet(notify):
             data["disable_notification"] = "true"
         if reply_to:
             data["reply_to_message_id"] = reply_to
             data["allow_sending_without_reply"] = "true"
-        mk = self._markup(button)
+        mk = self._markup(button, account)
         if mk:
             data["reply_markup"] = mk
         res = self._api("sendMessage", data)
@@ -257,7 +268,7 @@ class Publisher:
         return f'👉 <a href="{html.escape(link, quote=True)}">Écris-nous pour rejoindre le groupe VIP</a>'
 
     def post_public(self, text: str, img: Optional[str] = None, reply_to: Optional[int] = None, button: bool = True,
-                    notify: bool = False) -> Optional[int]:
+                    notify: bool = False, account: bool = False) -> Optional[int]:
         """Post du groupe PUBLIC. Image : le texte est suivi d'un lien cliquable pour nous ecrire (et du bouton).
         notify=False : sans sonnerie (posts courants) ; notify=True : nouveau signal."""
         if img and os.path.exists(img):
@@ -268,7 +279,7 @@ class Publisher:
                 self.send_text(text, reply_to=mid or reply_to, button=False, notify=False)
                 return mid
             return self.send_photo(img, cap, reply_to=reply_to, button=button, notify=notify)
-        return self.send_text(text, reply_to=reply_to, button=button, notify=notify)
+        return self.send_text(text, reply_to=reply_to, button=button, notify=notify, account=account)
 
     # ------------------------------------------------------------ verification (ne poste rien)
     def check_target(self) -> dict:
@@ -380,15 +391,32 @@ class Publisher:
         if mid and self.live:
             self._api("pinChatMessage", {"chat_id": self.target, "message_id": mid, "disable_notification": "true"})
 
-    def post_pinned(self) -> Optional[int]:
-        """VIP : guide d'usage (a epingler UNE fois), sans sonnerie. En direct : l'epingle."""
-        mid = self.send_text(pinned_text(self.cfg["brand"]), notify=False)
+    def _pinned_by_us(self) -> Optional[int]:
+        """Identifiant du message epingle du groupe s'il a ete publie par ce bot, sinon None."""
+        chat, me = self._api("getChat", {"chat_id": self.target}), self._api("getMe", {})
+        pm = (chat or {}).get("pinned_message") or {}
+        if pm and me and (pm.get("from") or {}).get("id") == me.get("id"):
+            return pm.get("message_id")
+        return None
+
+    def upsert_pinned(self, text: str, contact_button: bool) -> Optional[int]:
+        """Message epingle (guide VIP / accueil public). En direct : MODIFIE le message epingle du bot s'il existe (ni doublon ni
+        notification), sinon le publie et l'epingle. En apercu : envoye dans ton chat prive."""
+        mid = self._pinned_by_us() if self.live else None
+        if mid:
+            data = {"chat_id": self.target, "message_id": mid, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"}
+            mk = self._markup(contact_button, account=True)
+            if mk:
+                data["reply_markup"] = mk
+            return mid if self._api("editMessageText", data) else None
+        mid = self.send_text(text, button=contact_button, notify=False, account=True)
         self._pin(mid)
         return mid
 
+    def post_pinned(self) -> Optional[int]:
+        """VIP : guide d'usage epingle, avec le bouton et le lien d'ouverture de compte."""
+        return self.upsert_pinned(pinned_text(self.cfg["brand"], self.cfg.get("account_link", "")), contact_button=False)
+
     def post_welcome(self) -> Optional[int]:
-        """PUBLIC : message d'accueil (a epingler UNE fois), sans sonnerie. En direct : l'epingle."""
-        import signal_content
-        mid = self.post_public(signal_content.welcome(self.handle), notify=False)
-        self._pin(mid)
-        return mid
+        """PUBLIC : message d'accueil epingle, avec les boutons 'nous ecrire' et 'ouvrir un compte'."""
+        return self.upsert_pinned(welcome(self.handle, self.cfg.get("account_link", "")), contact_button=True)

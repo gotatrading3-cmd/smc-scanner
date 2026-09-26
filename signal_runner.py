@@ -11,7 +11,8 @@ signal_runner.py - Canal de signaux GOTA Confluence, DEUX audiences. Tourne :
     python signal_runner.py --once          # un seul cycle (mode cloud)
     python signal_runner.py --test          # TEST 'vue abonnes' (VIP puis public) dans ton chat prive
     python signal_runner.py --demo [--no-send]   # un exemple historique complet (apercu)
-    python signal_runner.py --brief|--edu|--cta|--recap|--pinned   # apercus de contenu
+    python signal_runner.py --brief|--edu|--cta|--promo|--account|--recap|--pinned   # apercus de contenu (ton chat prive)
+    python signal_runner.py --post-pinned   # guide VIP + accueil public epingles (modifie les messages epingles s'ils existent)
     python signal_runner.py --check-channel # verifie que le bot peut publier dans les 2 groupes (ne poste rien)
 
 MODE APERCU PAR DEFAUT : chaque audience n'est publiee pour de bon que si elle est activee (SIGNALS_LIVE pour le VIP,
@@ -413,7 +414,7 @@ def _stats_line(recs: List[dict]) -> str:
     s = summarize([{"r": r["r"], "outcome": r["outcome"]} for r in recs])
     if not s.get("n"):
         return "aucun trade clôturé"
-    return f"{s['n']} signaux · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · <b>{s['total_r']:+.1f}R</b>"
+    return f"{s['n']} signal{'aux' if s['n'] > 1 else ''} · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · <b>{s['total_r']:+.1f}R</b>"
 
 
 def build_recap_image(st: dict, hist: List[dict], now: pd.Timestamp, week_only: bool, cfg: dict) -> Optional[str]:
@@ -512,6 +513,12 @@ def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
     if wd < 5 and in_win(12, 30, 240) and can("ny", today):                               # ouverture de New York
         pub_pub.post_public(content.new_york(st, n_sig, n_active, len(_watch_names(st))))
         done("ny", today)
+    if wd < 5 and in_win(17, 30, 210) and _watch_names(st) and can("watch", today):       # radar du soir (paires pres d'une zone)
+        pub_pub.post_public(content.watch(st, _watch_names(st)))
+        done("watch", today)
+    if wd == 2 and cfg.get("account_link") and in_win(13, 0, 300) and can("account", today):   # rappel : ouvrir un compte
+        pub_pub.post_public(content.account(st), account=True)
+        done("account", today)
     if in_win(15, 0, 300) and can("cta", today):                                          # invitation a nous ecrire
         if wd in (1, 4):
             pub_pub.post_public(content.promo(st, cfg.get("vip_perks", []), handle))
@@ -776,7 +783,7 @@ def setup_wizard() -> None:
 
 
 KNOWN_ARGS = {"--once", "--setup", "--check-channel", "--test", "--demo", "--brief", "--edu", "--cta", "--promo", "--recap",
-              "--pinned", "--post-pinned", "--no-send"}
+              "--pinned", "--post-pinned", "--account", "--no-send"}
 
 
 def main() -> None:
@@ -801,13 +808,13 @@ def main() -> None:
         return followers_test()
     if "--demo" in a:
         return demo()
-    if any(x in a for x in ("--brief", "--edu", "--cta", "--promo", "--recap", "--pinned")):
+    if any(x in a for x in ("--brief", "--edu", "--cta", "--promo", "--account", "--recap", "--pinned")):
         cfg = load_cfg()
         pub_vip, pub_pub = _preview_pubs(cfg)
         st = load_state()
         now = utc_now()
         if "--pinned" in a:
-            pub_vip.send_text(pinned_text(cfg["brand"]))
+            pub_vip.send_text(pinned_text(cfg["brand"], cfg.get("account_link", "")), account=True)
             pub_pub.send_text("<b>Description du groupe public</b> (Telegram > groupe > Modifier > Description) :\n\n" + CHANNEL_ABOUT_PUBLIC)
         if "--brief" in a:
             pub_pub.post_public(content.morning(st, market.snapshot(), _watch_names(st), pub_pub.handle))
@@ -817,6 +824,8 @@ def main() -> None:
             pub_pub.post_public(content.cta(st, pub_pub.handle))
         if "--promo" in a:
             pub_pub.post_public(content.promo(st, cfg.get("vip_perks", []), pub_pub.handle))
+        if "--account" in a:
+            pub_pub.post_public(content.account(st), account=True)
         if "--recap" in a:
             img = build_recap_image(st, load_history(), now, False, cfg)
             if img:

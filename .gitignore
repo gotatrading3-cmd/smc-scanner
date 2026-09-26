@@ -51,3 +51,6 @@ __pycache__/
 # Logo : on garde les fichiers finaux, pas les apercus de travail
 brand/_*.png
 brand/logo_original_*.jpg
+
+# cle de chiffrement de l'etat (secret)
+state_key.txt

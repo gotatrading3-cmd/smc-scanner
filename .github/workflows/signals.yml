@@ -11,10 +11,10 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "scan = cycle normal | guides = guide VIP + accueil public (epingles) | test = test vue abonnes | demo | brief | edu | cta | promo | recap | pinned = apercus"
+        description: "scan = cycle normal | guides = guide VIP + accueil public epingles (modifie les messages epingles) | test = test vue abonnes | demo | brief | edu | cta | promo | account | recap | pinned = apercus"
         type: choice
         default: scan
-        options: [scan, guides, test, demo, brief, edu, cta, promo, recap, pinned]
+        options: [scan, guides, test, demo, brief, edu, cta, promo, account, recap, pinned]
 
 concurrency:
   group: gota-signals
@@ -40,6 +40,7 @@ jobs:
       CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
       PRIVATE_LINK: ${{ secrets.PRIVATE_LINK }}
       CONTACT_LINK: ${{ vars.CONTACT_LINK }}
+      ACCOUNT_LINK: ${{ vars.ACCOUNT_LINK }}
       SIGNALS_LIVE: ${{ vars.SIGNALS_LIVE }}
       PUBLIC_LIVE: ${{ vars.PUBLIC_LIVE }}
       PUBLIC_SIGNALS_PER_DAY: ${{ vars.PUBLIC_SIGNALS_PER_DAY }}
@@ -77,6 +78,7 @@ jobs:
             edu)    python signal_runner.py --edu ;;
             cta)    python signal_runner.py --cta ;;
             promo)  python signal_runner.py --promo ;;
+            account) python signal_runner.py --account ;;
             recap)  python signal_runner.py --recap ;;
             pinned) python signal_runner.py --pinned ;;
             *)      python signal_runner.py --once ;;

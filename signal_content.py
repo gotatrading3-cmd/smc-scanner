@@ -123,6 +123,17 @@ def morning(st: dict, snap: dict, watch: List[str], handle: str) -> str:
     return pick(st, "morning", v).format(**d)
 
 
+def watch(st: dict, names: List[str]) -> str:
+    """Radar du soir : paires dont le prix approche d'une zone d'interet (donnees reelles du scan, aucun niveau)."""
+    d = dict(liste=", ".join(names[:6]), k=len(names), s="s" if len(names) > 1 else "")
+    v = [
+        "👀 On garde l'œil sur {liste} : le prix s'approche d'une zone qui nous intéresse. Si un setup se valide, le plan complet part directement dans le VIP.",
+        "🔎 Ce soir, {k} paire{s} sous surveillance : {liste}. Rien n'est validé pour l'instant — on attend la confirmation, comme toujours.",
+        "📡 Radar du soir : {liste}. Le prix approche d'une zone d'intérêt ; on vous prévient ici dès que ça bouge.",
+    ]
+    return pick(st, "watch", v).format(**d)
+
+
 def _activity(n_sig: int, n_active: int, n_watch: int) -> str:
     if n_sig:
         s = f"Depuis ce matin : {n_sig} signal{'aux' if n_sig > 1 else ''} envoyé{'s' if n_sig > 1 else ''} au VIP"
@@ -196,13 +207,32 @@ def promo(st: dict, perks: List[str], handle: str) -> str:
             f"Pour nous rejoindre, il suffit de nous écrire ➜ {_handle(handle)}")
 
 
-def welcome(handle: str) -> str:
-    """Message d'accueil du groupe public (a epingler) : ce qu'on y trouve et comment rejoindre le VIP."""
+def account_block(link: str) -> str:
+    """Bloc 'ouvrir un compte de trading' des messages epingles (lien partenaire, indique comme tel)."""
+    if not str(link).startswith("http"):
+        return ""
+    return ("\n\n💼 <b>Ouvrir un compte de trading</b>\n"
+            "Pour suivre les signaux, il faut un compte chez un courtier : tu peux ouvrir le tien ici (lien partenaire) ➜ "
+            f'<a href="{html.escape(str(link), quote=True)}">Créer mon compte</a>')
+
+
+def welcome(handle: str, account_link: str = "") -> str:
+    """Message d'accueil du groupe public (a epingler) : ce qu'on y trouve, comment rejoindre le VIP, ouvrir un compte."""
     return ("👋 <b>Bienvenue sur GOTA TRADING !</b>\n\n"
             "Ici, on suit les paires de devises en continu et on partage ce qui bouge : le point du matin, quelques signaux en direct, "
             "le suivi de chaque trade (gains comme pertes) et un conseil par jour.\n\n"
             "⭐ Le groupe VIP reçoit <b>tous</b> les signaux (entrée, stop, objectifs), l'analyse détaillée et le suivi complet.\n"
-            f"Pour le rejoindre, un simple message ➜ {_handle(handle)}")
+            f"Pour le rejoindre, un simple message ➜ {_handle(handle)}" + account_block(account_link))
+
+
+def account(st: dict) -> str:
+    """Rappel hebdomadaire (groupe public) : ouvrir un compte de trading. Le bouton 'Ouvrir un compte' est sous le message."""
+    v = [
+        "💼 Tu veux suivre les signaux mais tu n'as pas encore de compte de trading ? Tu peux ouvrir le tien juste en dessous 👇 (lien partenaire)",
+        "🧭 Petit rappel pour les nouveaux : pour passer des trades, il faut un compte chez un courtier. Le lien pour en ouvrir un est juste en dessous 👇 (lien partenaire)",
+        "🚀 Prêt à passer à l'action ? Ouvre ton compte de trading avec le lien qu'on partage avec la communauté 👇 (lien partenaire)",
+    ]
+    return pick(st, "account", v)
 
 
 EDU_TIPS = [
