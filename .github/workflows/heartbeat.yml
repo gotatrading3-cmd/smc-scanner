@@ -1,0 +1,24 @@
+name: GOTA Relance
+
+# Second declencheur GitHub, independant du premier : toutes les ~5 minutes il relance le workflow "GOTA Signaux".
+# Le planificateur gratuit de GitHub laisse tomber des executions ; deux planifications independantes augmentent les chances
+# qu'un cycle parte. (Le declencheur externe cron-job.org, quand il existe, reste la solution fiable.)
+# Ne fait que lancer un scan : aucune publication ici. Le groupe de concurrence de "GOTA Signaux" evite tout chevauchement.
+
+on:
+  schedule:
+    - cron: "2-59/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  relance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Relancer un scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run signals.yml --repo "$GITHUB_REPOSITORY" -f action=scan
