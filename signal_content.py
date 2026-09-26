@@ -142,6 +142,21 @@ def scan_report(st: dict, hh: int, n_symbols: int, n_sig: int, n_active: int, wa
     return text + (f"\n\n{_watch_line(watch)}" if watch else "")
 
 
+def ranking(st: dict, snap: dict) -> Optional[str]:
+    """Classement des devises sur 5 jours (donnees reelles), pour le samedi. None si les donnees manquent."""
+    ranked = snap.get("ranked") or []
+    if len(ranked) < 4:
+        return None
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, (cur, p) in enumerate(ranked):
+        name = NAMES.get(cur, cur)
+        lines.append(f"{medals[i] if i < 3 else str(i + 1) + '.'} {name[0].upper() + name[1:]} {pct(p)}")
+    head = pick(st, "ranking", ["📊 Classement des devises sur les 5 derniers jours :", "🏁 Force des devises cette semaine :",
+                                "🌍 Qui a dominé la semaine ? Force des devises sur 5 jours :"])
+    return head + "\n" + "\n".join(lines)
+
+
 def movers(st: dict, mv: dict) -> str:
     """Plus gros mouvements du jour sur les paires FX (donnees reelles)."""
     def fmt(rows) -> str:

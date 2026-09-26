@@ -562,6 +562,8 @@ def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
         push("sat", today, content.weekend_saturday(st, handle))
     if wd >= 5 and in_win(12, 0, 240) and can("crypto", today):                           # point crypto du week-end
         push("crypto", today, _crypto_text(st))
+    if wd == 5 and in_win(16, 0, 240) and can("ranking", today):                          # samedi : classement des devises de la semaine
+        push("ranking", today, content.ranking(st, _snapshot_cached(st, now)))
     if wd == 6 and in_win(17, 30, 240) and can("sun", today):                             # dimanche soir : plan de la semaine
         push("sun", today, content.weekend_sunday(st, _snapshot_cached(st, now)))
 
@@ -606,6 +608,7 @@ def post_now(kind: str) -> None:
             "sun": ("sun", today, lambda: content.weekend_sunday(st, _snapshot_cached(st, now)), {}),
             "movers": ("movers_am" if now.hour < 14 else "movers_pm", today, lambda: _movers_text(st), {}),
             "crypto": ("crypto", today, lambda: _crypto_text(st), {}),
+            "ranking": ("ranking", today, lambda: content.ranking(st, _snapshot_cached(st, now)), {}),
         }
         if lb:
             lo = max(lb)
