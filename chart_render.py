@@ -27,12 +27,6 @@ UP, DOWN = "#26a69a", "#ef5350"                 # bougies (standard plateformes)
 GREEN, RED, BLUE = "#2ecc71", "#ef4444", "#38bdf8"
 TF_LABEL = {"1m": "M1", "5m": "M5", "15m": "M15", "60m": "H1", "240m": "H4"}
 
-LEGAL_1 = "AVERTISSEMENT — Le trading comporte un risque élevé de perte en capital. Ne risquez que des fonds que vous pouvez vous permettre de perdre."
-LEGAL_2 = ("Contenu informatif et éducatif : il ne constitue ni un conseil en investissement, ni une recommandation personnalisée. "
-           "Les performances passées ne préjugent pas des performances futures.")
-DISCLAIMER = "Contenu éducatif — pas un conseil financier. Le trading comporte un risque de perte en capital."   # compat
-
-
 # ------------------------------------------------------------------ outils de mise en page
 _IMG: dict = {}
 _PIL: dict = {}
@@ -126,24 +120,6 @@ class Card:
         self.rrect(ax, x, y, w, h, r=h / 2, fc=fc, ec=ec or fc, lw=1.4, z=z)
         self.text(ax, x + w / 2, y + h / 2 + 1, s, size=size, color=tc, weight=weight, ha="center", z=z + 1)
 
-    def legal(self, ax, y: float, x: float = 44, maxw: Optional[float] = None):
-        """Avertissement sur le risque en capital : 'AVERTISSEMENT' en or gras, puis le texte."""
-        maxw = maxw or (self.w - 2 * x)
-        head, rest = "AVERTISSEMENT", LEGAL_1.split("AVERTISSEMENT", 1)[1]
-        size = 10.4
-        while True:
-            th = self.text(ax, x, y, head, size=size, color=GOLD, weight="bold")
-            tr = self.text(ax, x + self.width(th) + 4, y, rest, size=size, color="#9aa3b0")
-            if self.width(th) + 4 + self.width(tr) <= maxw or size <= 7:
-                break
-            th.remove(); tr.remove()
-            size -= 0.2
-        size = 10.0
-        t2 = self.text(ax, x, y + 22, LEGAL_2, size=size, color="#6f7887")
-        while self.width(t2) > maxw and size > 7:
-            size -= 0.2
-            t2.set_fontsize(size)
-
     def save(self, path: str) -> str:
         self.fig.savefig(path, dpi=100, facecolor=BG)
         plt.close(self.fig)
@@ -197,7 +173,7 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
         x -= 14
 
     # ---------------------------------------------------------------- graphique
-    CX, CY, CW, CH = 44, 148, 1512, 452
+    CX, CY, CW, CH = 44, 148, 1512, 520
     card.rrect(bg, CX, CY, CW, CH, r=14, fc="#080c12", ec=BORDER, lw=1.0, z=1)
     ax = card.chart_axes(CX + 76, CY + 14, CW - 76 - 176, CH - 14 - 34)
     i_sig = df.index.get_loc(pd.Timestamp(sig.bar_open))
@@ -297,7 +273,7 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
             card.text(ov, CX + 128, CY + 94, f"Résultat :  {result['r']:+.2f} R", size=15, color=WHITE, z=22)
 
     # ---------------------------------------------------------------- tableau des niveaux
-    TY, TH = 616, 104
+    TY, TH = 690, 104
     card.rrect(bg, 44, TY, 1512, TH, r=14, fc=PANEL, ec=BORDER, lw=1.0, z=1)
     cells = [("ENTRÉE", _pf(sig.entry, digits), WHITE, "prix du signal", None),
              ("STOP LOSS", _pf(sig.sl, digits), DOWN, "−" + _dist(sig, sig.sl), "stop" if stopped else None)]
@@ -317,7 +293,7 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
             card.text(bg, cx, TY + 87, sub, size=10.5, color=MUTED, ha="center")
 
     # ---------------------------------------------------------------- pastilles de confirmation
-    CYc = 736
+    CYc = 812
     scored = [("sweep", "Liquidité"), ("stack", "OB + FVG"), ("volume", "Volume Profile"),
               ("momentum", "RSI"), ("discount", "Discount" if long_ else "Premium"), ("session", "Session")]
     nsc = sum(1 for k, _ in scored if sig.checks.get(k))
@@ -328,16 +304,13 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
     card.rrect(ov, xx, CYc, wch, 42, r=21, fc="none", ec=GOLD, lw=1.3, z=22)
     xx += wch + 12
     for key, lab in scored:
-        ok = bool(sig.checks.get(key))
-        t = card.text(ov, xx + 16, CYc + 21, ("✓  " if ok else "✗  ") + lab, size=10.8, color=GREEN if ok else DIM, weight="bold" if ok else "normal", z=23)
+        if not sig.checks.get(key):                       # fiche epuree : seules les confirmations remplies sont affichees
+            continue
+        t = card.text(ov, xx + 16, CYc + 21, "✓  " + lab, size=10.8, color=GREEN, weight="bold", z=23)
         wch = card.width(t) + 32
-        card.rrect(ov, xx, CYc, wch, 42, r=21, fc="#0e1a14" if ok else "none", ec="#1f6b45" if ok else "#232b36", lw=1.1, z=22)
+        card.rrect(ov, xx, CYc, wch, 42, r=21, fc="#0e1a14", ec="#1f6b45", lw=1.1, z=22)
         xx += wch + 10
 
-    # ---------------------------------------------------------------- pied de page
-    card.legal(bg, 808)
-    card.text(bg, 44, 868, brand.upper() + "   ·   PRIX INDICATIFS : APPLIQUE LES DISTANCES À TON PROPRE PRIX D'ENTRÉE", size=8.8, color=DIM)
-    card.text(bg, W - 44, 868, sig.id, size=8.8, color=DIM, ha="right")
     return card.save(out_path)
 
 
@@ -387,7 +360,7 @@ def render_recap_card(title: str, subtitle: str, kpis: List[tuple], trades: List
 
     card.text(bg, 60, 806, _spaced("Derniers trades clôturés"), size=11, color=MUTED)
     y = 842
-    for t in trades[:9]:
+    for t in trades[:10]:
         pos = t["r"] >= 0
         card.text(bg, 64, y, t["date"], size=12, color=MUTED)
         card.text(bg, 170, y, t["symbol"], size=13, color=WHITE, weight="bold")
@@ -396,6 +369,4 @@ def render_recap_card(title: str, subtitle: str, kpis: List[tuple], trades: List
         card.text(bg, W - 64, y, f"{t['r']:+.2f} R", size=13.5, color=UP if pos else DOWN, weight="bold", ha="right")
         bg.add_line(plt.Line2D([60, W - 60], [y + 21, y + 21], color=GRID, lw=1.0, zorder=3))
         y += 42
-    card.legal(bg, 1264, x=60, maxw=W - 120)
-    card.text(bg, W / 2, 1318, brand.upper() + "   ·   PERTES INCLUSES, JAMAIS MASQUÉES", size=8.8, color=DIM, ha="center")
     return card.save(out_path)

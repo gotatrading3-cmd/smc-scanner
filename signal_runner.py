@@ -29,7 +29,7 @@ import pandas as pd
 import signal_data as sd
 from signal_data import connect, shutdown, get_rates, get_tick, symbol_meta, UNIVERSE, available_ids, utc_now, TF_MIN
 from signal_engine import Signal, TradeSim, analyze, htf_bias, summarize
-from signal_publisher import Publisher, load_cfg, save_cfg, DISCLAIMER
+from signal_publisher import Publisher, load_cfg, save_cfg, pinned_text, CHANNEL_ABOUT
 from chart_render import render_signal_chart, render_recap_card, GREEN, RED, GOLD, BLUE, WHITE
 
 if hasattr(sys.stdout, "buffer"):
@@ -287,8 +287,7 @@ def _stats_line(recs: List[dict]) -> str:
     s = summarize([{"r": r["r"], "outcome": r["outcome"]} for r in recs])
     if not s.get("n"):
         return "aucun trade clôturé"
-    return (f"{s['n']} signaux · {s['tp1']:.0f} % atteignent TP1 · {s['sl']:.0f} % stoppés · "
-            f"résultat cumulé <b>{s['total_r']:+.1f}R</b>")
+    return f"{s['n']} signaux · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · <b>{s['total_r']:+.1f}R</b>"
 
 
 def post_daily_recap(st: dict, pub: Publisher, now: pd.Timestamp) -> bool:
@@ -299,9 +298,8 @@ def post_daily_recap(st: dict, pub: Publisher, now: pd.Timestamp) -> bool:
     tot = sum(r["r"] for r in today)
     rows = "\n".join(f"• {r['display']} {'ACHAT' if r['direction'] == 'LONG' else 'VENTE'} → {_label_outcome(r['outcome'])} ({r['r']:+.2f}R)"
                      for r in today)
-    text = (f"📊 <b>Bilan du {now.strftime('%d/%m/%Y')}</b>\n{rows}\n\n"
-            f"Résultat du jour : <b>{tot:+.2f}R</b>\n"
-            f"Depuis le début du suivi ({str(st['started'])[:10]}) : {_stats_line(hist)}\n\n{DISCLAIMER}")
+    text = (f"📊 <b>Bilan du {now.strftime('%d/%m')}</b>\n{rows}\n\n"
+            f"Jour : <b>{tot:+.2f}R</b>  ·  Cumul : {_stats_line(hist)}")
     return pub.send_text(text, button=True) is not None
 
 
@@ -336,7 +334,7 @@ def post_weekly_recap(st: dict, pub: Publisher, cfg: dict, now: pd.Timestamp) ->
     if not img:
         return False
     wk = [r for r in hist if pd.Timestamp(r["close_time"]) >= (now - pd.Timedelta(days=now.weekday())).normalize()]
-    cap = f"📊 <b>Bilan de la semaine</b>\nCette semaine : {_stats_line(wk)}\nDepuis le début : {_stats_line(hist)}"
+    cap = f"📊 <b>Bilan de la semaine</b>\nSemaine : {_stats_line(wk)}\nCumul : {_stats_line(hist)}"
     return pub.post_recap_image(img, cap) is not None
 
 
@@ -561,13 +559,17 @@ def main() -> None:
         return
     if "--demo" in a:
         return demo()
-    if any(x in a for x in ("--recap", "--promo", "--edu")):
+    if any(x in a for x in ("--recap", "--promo", "--edu", "--pinned")):
         cfg = load_cfg()
         cfg["live"] = False
         pub = Publisher(cfg, log=log)
         pub.live, pub.target = False, pub.owner_chat
         st = load_state()
         now = utc_now()
+        if "--pinned" in a:
+            # apercu du message a epingler + du texte de description du canal (a coller a la main dans Telegram)
+            pub.send_text(pinned_text(cfg["brand"]))
+            pub.send_text("<b>Description du canal</b> (Telegram → canal → Modifier → Description) :\n\n" + CHANNEL_ABOUT)
         if "--promo" in a:
             pub.post_promo()
         if "--edu" in a:

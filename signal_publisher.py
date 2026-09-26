@@ -5,7 +5,8 @@ MODE APERCU PAR DEFAUT : tant que channel.json n'a pas "live": true ET un channe
 TOUT est envoye uniquement dans TON chat prive (libelle "APERCU"). Rien n'est publie a ta communaute.
 
 Principes de contenu (ecrits dans le code volontairement) :
-- chaque post rappelle que c'est educatif / pas un conseil financier / risque de perte
+- posts COURTS et propres : uniquement les niveaux (entree, stop, TP1/TP2/TP3, R:R), sans encombrement
+- l'avertissement complet vit UNE fois, dans le message epingle + la description du canal (voir PINNED / --pinned)
 - les resultats viennent de l'historique reel (signals_history.jsonl) : pertes incluses, jamais masquees
 - aucune promesse de gain, aucune fausse rarete : l'appel vers le canal prive decrit ce qu'il contient vraiment
 """
@@ -47,10 +48,24 @@ DEFAULT_CFG = {
         "Échanges avec la communauté",
     ],
 }
+# Avertissement COMPLET : affiche une seule fois (message epingle), jamais sur chaque fiche.
 DISCLAIMER = ("⚠️ <b>Avertissement</b> : le trading comporte un risque élevé de perte en capital. Contenu informatif et "
               "éducatif : il ne constitue ni un conseil en investissement, ni une recommandation personnalisée. "
               "Les performances passées ne préjugent pas des performances futures.")
-SHORT_DISCLAIMER = "⚠️ Risque élevé de perte en capital · contenu informatif, pas un conseil en investissement."
+CHANNEL_ABOUT = ("Signaux forex & crypto : entrée, stop loss et objectifs. Chaque résultat est publié, pertes incluses. "
+                 "Le trading comporte un risque de perte en capital ; contenu informatif, pas un conseil en investissement.")
+
+
+def pinned_text(brand: str = "GOTA TRADING") -> str:
+    return (f"📌 <b>{html.escape(brand)} — mode d'emploi</b>\n\n"
+            "Chaque signal indique l'<b>entrée</b>, le <b>stop loss</b>, trois objectifs (<b>TP1 · TP2 · TP3</b>) et le ratio <b>R:R</b>.\n\n"
+            "• <b>1R</b> = la perte prévue si le stop est touché\n"
+            "• Gestion suggérée : 40 % à TP1 (puis stop à l'entrée) · 30 % à TP2 · 30 % à TP3\n"
+            "• Risque conseillé : 1 % du capital maximum par trade\n"
+            "• Prix indicatifs : applique les distances (pips / points) à ton propre prix d'entrée\n"
+            "• Chaque signal est suivi jusqu'au bout — TP, stop ou expiration — gains et pertes publiés\n\n"
+            + DISCLAIMER)
+
 
 EDU_TIPS = [
     "💡 <b>L'Order Block (OB)</b>\nC'est la dernière bougie opposée avant un mouvement impulsif. Des ordres importants y sont souvent restés en attente : quand le prix revient, il réagit parfois. « Parfois » : on attend toujours une bougie de confirmation avant d'agir.",
@@ -212,21 +227,20 @@ class Publisher:
 
     # ------------------------------------------------------------ signaux
     def signal_parts(self, s: Signal, digits: int) -> tuple:
-        """(legende du signal, detail textuel des confirmations). La legende est autonome (avertissement inclus) ;
-        le detail des confirmations est deja dans l'image, il sert de version texte."""
+        """(legende courte, detail textuel des confirmations). La legende ne contient que l'essentiel :
+        sens, instrument, entree, stop loss, TP1/TP2/TP3 et ratio. Le detail des confirmations est deja dans l'image."""
         long_ = s.direction == "LONG"
         f = lambda v: _pf(v, digits)
         rr = abs(s.tps[-1] - s.entry) / max(s.risk, 1e-12)
-        cap = [f"{'🟢' if long_ else '🔴'} <b>{'ACHAT' if long_ else 'VENTE'} {html.escape(s.display)}</b> · {_tf(s.tf)} · <b>Grade {s.grade}</b>",
-               f"📍 Entrée <code>{f(s.entry)}</code>   🛑 Stop <code>{f(s.sl)}</code>",
-               f"🎯 TP1 <code>{f(s.tps[0])}</code> · TP2 <code>{f(s.tps[1])}</code> · TP3 <code>{f(s.tps[2])}</code>",
-               f"⚖️ Ratio R:R <b>1 : {rr:.0f}</b> · risque conseillé : 1 % du capital maximum",
+        cap = [f"{'🟢' if long_ else '🔴'} <b>{'ACHAT' if long_ else 'VENTE'} {html.escape(s.display)}</b> · {_tf(s.tf)}",
                "",
-               "📌 Gestion : 40 % à TP1 (puis stop à l'entrée) · 30 % à TP2 · 30 % à TP3",
-               _dist_line(s),
-               "<i>Prix indicatifs : applique ces distances à ton propre prix d'entrée.</i>",
+               f"📍 Entrée   <code>{f(s.entry)}</code>",
+               f"🛑 Stop loss   <code>{f(s.sl)}</code>",
+               f"🎯 TP1   <code>{f(s.tps[0])}</code>",
+               f"🎯 TP2   <code>{f(s.tps[1])}</code>",
+               f"🎯 TP3   <code>{f(s.tps[2])}</code>",
                "",
-               DISCLAIMER]
+               f"R:R 1 : {rr:.0f}  ·  Grade {s.grade}"]
         htf = "journalière" if s.tf == "240m" else "H4"
         ok_lines = [f"Tendance {htf} {'haussière' if long_ else 'baissière'}",
                     f"Retest {'Order Block' if s.zone_kind == 'OB' else 'Fair Value Gap'} frais + rejet"]
@@ -236,10 +250,10 @@ class Publisher:
                 ok_lines.append(_check_text(k, s, long_))
             else:
                 miss.append(_acc(CHECK_LABELS[k].split(" (")[0]))
-        body = [f"✅ <b>{s.score}/6 confirmations</b> + 4 conditions obligatoires"]
+        body = [f"{s.score}/6 confirmations + 4 conditions obligatoires"]
         body += [f"• {t}" for t in ok_lines]
         if miss:
-            body.append(f"▫️ Non remplies : {' · '.join(miss)}")
+            body.append(f"Non remplies : {' · '.join(miss)}")
         return "\n".join(cap), "\n".join(body)
 
     def signal_caption(self, s: Signal, digits: int) -> str:
@@ -247,54 +261,48 @@ class Publisher:
         return cap + "\n\n" + body
 
     def post_signal(self, s: Signal, img_path: str, digits: int) -> Optional[int]:
-        cap, body = self.signal_parts(s, digits)
-        if len(self._tag() + cap) <= 1000:                       # cas normal : UN seul message (image + legende)
-            return self.send_photo(img_path, cap, button=True)
-        mid = self.send_photo(img_path, cap[: cap.rfind("\n\n")], button=True)   # securite : jamais de HTML coupe
-        if mid:
-            self.send_text(cap[cap.rfind("\n\n") + 2:], reply_to=mid)
-        return mid
+        cap, _ = self.signal_parts(s, digits)
+        return self.send_photo(img_path, cap, button=True)
 
     def update_text(self, s: Signal, ev: dict, total_r: float) -> str:
         t, name = ev["type"], html.escape(s.display)
         if t == "TP1":
-            return (f"🎯 <b>TP1 atteint</b> — {name}\n+1R sur 40 % de la position. "
-                    f"Stop remonté à l'entrée : le reste du trade est protégé.")
+            return f"🎯 <b>TP1 atteint</b> · {name}\n+1R · stop à l'entrée"
         if t == "TP2":
-            return f"🎯🎯 <b>TP2 atteint</b> — {name}\n+2R sur 30 % de la position. Il reste 30 % vers TP3."
+            return f"🎯 <b>TP2 atteint</b> · {name}\n+2R"
         if t == "TP3":
-            return f"🏆 <b>TP3 atteint</b> — {name}\nTrade terminé. Résultat total : <b>{total_r:+.2f}R</b>."
+            return f"🏆 <b>TP3 atteint</b> · {name}\nRésultat : {total_r:+.2f}R"
         if t == "SL":
-            return (f"🛑 <b>Stop touché</b> — {name}\nRésultat : <b>{total_r:+.2f}R</b>. "
-                    f"Le risque était défini avant l'entrée : on passe au prochain setup, sans revanche.")
+            return f"🛑 <b>Stop touché</b> · {name}\nRésultat : {total_r:+.2f}R"
         if t == "BE":
-            return (f"⏹ <b>Stop à l'entrée touché</b> — {name}\nTrade clôturé : <b>{total_r:+.2f}R</b> "
-                    f"(TP1 déjà encaissé).")
-        return f"⌛ <b>Setup expiré</b> — {name}\nClôture au marché : <b>{total_r:+.2f}R</b>."
+            return f"⏹ <b>Clôturé à l'entrée</b> · {name}\nRésultat : {total_r:+.2f}R"
+        return f"⌛ <b>Expiré</b> · {name}\nRésultat : {total_r:+.2f}R"
 
     def post_update(self, s: Signal, ev: dict, total_r: float, reply_to: Optional[int],
                     img_path: Optional[str] = None) -> Optional[int]:
-        text = self.update_text(s, ev, total_r) + f"\n\n{SHORT_DISCLAIMER}"
+        text = self.update_text(s, ev, total_r)
         if img_path and os.path.exists(img_path):
             return self.send_photo(img_path, text, reply_to=reply_to)
         return self.send_text(text, reply_to=reply_to)
 
     # ------------------------------------------------------------ bilans / contenu
     def post_recap_image(self, img_path: str, caption: str) -> Optional[int]:
-        return self.send_photo(img_path, caption + f"\n\n{DISCLAIMER}", button=True)
+        return self.send_photo(img_path, caption, button=True)
 
     def post_promo(self) -> Optional[int]:
         link = str(self.cfg.get("private_link", "")).strip()
         perks = "\n".join(f"• {html.escape(str(p))}" for p in self.cfg.get("private_perks", []))
-        text = (f"🔒 <b>Canal privé {html.escape(self.cfg['brand'])}</b>\n"
-                f"Ce que tu y trouves :\n{perks}\n\n"
-                f"Les signaux publics restent gratuits ici. Le canal privé, c'est la profondeur : le « pourquoi » derrière chaque setup.\n\n"
-                f"{DISCLAIMER}")
-        return self.send_text(text, button=bool(link))
+        return self.send_text(f"🔒 <b>Canal privé {html.escape(self.cfg['brand'])}</b>\n{perks}", button=bool(link))
 
     def post_education(self, day_index: int) -> Optional[int]:
-        tip = EDU_TIPS[day_index % len(EDU_TIPS)]
-        return self.send_text(tip + f"\n\n{DISCLAIMER}", button=True)
+        return self.send_text(EDU_TIPS[day_index % len(EDU_TIPS)], button=True)
+
+    def post_pinned(self) -> Optional[int]:
+        """Message d'usage + avertissement complet (a epingler UNE fois). En direct : tente de l'epingler."""
+        mid = self.send_text(pinned_text(self.cfg["brand"]))
+        if mid and self.live:
+            self._api("pinChatMessage", {"chat_id": self.target, "message_id": mid, "disable_notification": "true"})
+        return mid
 
 
 def _tf(tf: str) -> str:
