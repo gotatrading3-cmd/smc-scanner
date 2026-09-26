@@ -11,8 +11,8 @@
   "NZDUSD": "2026-09-25T21:00:00",
   "EURJPY": "2026-09-25T21:00:00",
   "GBPJPY": "2026-09-25T21:00:00",
-  "BTCUSD": "2026-09-26T05:00:00",
-  "ETHUSD": "2026-09-26T05:00:00",
+  "BTCUSD": "2026-09-26T09:00:00",
+  "ETHUSD": "2026-09-26T09:00:00",
   "EURGBP": "2026-09-25T21:00:00",
   "EURAUD": "2026-09-25T21:00:00",
   "EURCAD": "2026-09-25T21:00:00",
@@ -43,8 +43,8 @@
   "NZDUSD": "2026-09-26T13:08:47.566821",
   "EURJPY": "2026-09-26T13:08:47.566821",
   "GBPJPY": "2026-09-26T13:08:47.566821",
-  "BTCUSD": "2026-09-26T13:01:00",
-  "ETHUSD": "2026-09-26T13:01:00",
+  "BTCUSD": "2026-09-26T17:01:00",
+  "ETHUSD": "2026-09-26T17:01:00",
   "EURGBP": "2026-09-26T13:08:47.566821",
   "EURAUD": "2026-09-26T13:08:47.566821",
   "EURCAD": "2026-09-26T13:08:47.566821",
@@ -162,14 +162,14 @@
    "display": "BTCUSD",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.59
+   "dist_atr": 0.45
   },
   "ETHUSD": {
    "symbol": "ETHUSD",
    "display": "ETHUSD",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.51
+   "dist_atr": 0.48
   }
  },
  "copy_idx": {
@@ -184,5 +184,5 @@
  "pub_sig": {},
  "snap": {},
  "n_symbols": 30,
- "private_enc": "gAAAAABqt8GW_JJuV7Sphpv7CmGWBx8P3ZOv58rXhooclx7zfN0QFhuSvwDevcsRs-PQoux1lkpuNfuVDzj71UbUnfV7PnoGvy5SVZxGEWKZVXi8LlkQKj2uCoka9FtLiq3VGz3NLF4A"
+ "private_enc": "gAAAAABqt8JkyYlxom8nDg3adjY60cokjuPnT1vHMe2ciWmTO2e6PzvvVILQK0s-YE-skYAZHQJpzEmYR1IFcoIY2iKu466drO9wHqSUT-9wQmTguZLAmk_fqYaS9zkl1qOC8aQ3nTeJ"
 }
