@@ -547,9 +547,20 @@ def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
 
 # ------------------------------------------------------------------ cycle principal
 def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
+    """Un cycle complet. L'etat est TOUJOURS sauvegarde, meme apres une erreur : jamais de publication en double."""
+    try:
+        _run_cycle(st, cfg, pubs, ids)
+    finally:
+        save_state(st)
+
+
+def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
     now = utc_now()
     _stats["ok"] = _stats["fail"] = 0
-    update_active(st, pubs, cfg)
+    try:
+        update_active(st, pubs, cfg)
+    except Exception as e:                                    # un suivi en erreur ne bloque pas le scan
+        log(f"[SUIVI] erreur : {e} | {traceback.format_exc()[-300:]!r}")
     cands = []
     for sid in ids:
         try:
@@ -580,7 +591,6 @@ def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
             st["outage_alerted"] = True
     elif _stats["ok"] > 0:
         st["data_fail_runs"], st["outage_alerted"] = 0, False
-    save_state(st)
 
 
 def loop(once: bool = False) -> None:
