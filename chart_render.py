@@ -141,11 +141,24 @@ def _dist(sig, level: float) -> str:
 
 
 # ------------------------------------------------------------------ carte de signal
+def _invite_bar(card, bg, ov, y: int, text: str, contact: str = "") -> None:
+    """Barre d'invitation du groupe PUBLIC (bas de la fiche) : texte + @contact, centres."""
+    card.rrect(bg, 44, y, 1512, 46, r=23, fc="#12100a", ec=GOLD, lw=1.3, z=1)
+    t1 = card.text(ov, 0, y + 24, "✉  " + text, size=13, color=WHITE, weight="bold", z=23)
+    w1 = card.width(t1)
+    t2 = card.text(ov, 0, y + 24, contact, size=13, color=GOLD, weight="bold", z=23) if contact else None
+    x0 = 44 + (1512 - (w1 + ((28 + card.width(t2)) if t2 else 0))) / 2
+    t1.set_x(x0)
+    if t2:
+        t2.set_x(x0 + w1 + 28)
+
+
 def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n_before: int = 62,
                         n_after: int = 0, brand: str = "GOTA TRADING",
-                        result: Optional[dict] = None) -> str:
+                        result: Optional[dict] = None, footer: str = "", contact: str = "") -> str:
     """df : bougies (index = ouverture UTC) contenant la bougie du signal.
-    result (optionnel) : {"label": "TP1 ATTEINT", "r": 1.0, "color": GREEN, "hit": [True, False, False], "stopped": False}"""
+    result (optionnel) : {"label": "TP1 ATTEINT", "r": 1.0, "color": GREEN, "hit": [True, False, False], "stopped": False}
+    footer / contact (fiche PUBLIQUE) : barre d'invitation a nous ecrire, a la place des pastilles de confirmation."""
     W, H = 1600, 900
     long_ = sig.direction == "LONG"
     dir_col = UP if long_ else DOWN
@@ -208,7 +221,9 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
     zname = ("Order Block " if sig.zone_kind == "OB" else "Fair Value Gap ") + ("haussier" if long_ else "baissier")
     zmid = (sig.zone_lo + sig.zone_hi) / 2
     zbox = dict(boxstyle="round,pad=0.3", fc="#080c12", ec=dir_col, lw=0.9, alpha=0.93)
-    if xb > 14:
+    if result:                                         # cartes de suivi : le bandeau de resultat occupe ce coin
+        pass
+    elif xb > 14:
         ax.text(xb - 1.6, zmid, zname, color=dir_col, fontsize=10.5, fontweight="bold", va="center", ha="right", zorder=8, bbox=zbox)
     else:
         ax.text(max(xb, 1), sig.zone_hi + yr * 0.03, zname, color=dir_col, fontsize=10.5, fontweight="bold", va="bottom", zorder=8, bbox=zbox)
@@ -267,8 +282,8 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
     # bandeau de resultat (cartes de suivi)
     if result:
         rc = result.get("color", GOLD)
-        card.rrect(ov, CX + 100, CY + 24, 400, 92, r=12, fc="#070b10", ec=rc, lw=2.2, alpha=0.96, z=21)
-        card.text(ov, CX + 128, CY + 55, result["label"], size=25, color=rc, weight="bold", z=22)
+        t_lab = card.text(ov, CX + 128, CY + 55, result["label"], size=25, color=rc, weight="bold", z=22)
+        card.rrect(ov, CX + 100, CY + 24, max(400, card.width(t_lab) + 56), 92, r=12, fc="#070b10", ec=rc, lw=2.2, alpha=0.96, z=21)
         sub = result.get("sub") or (f"Résultat :  {result['r']:+.2f} R" if "r" in result else None)
         if sub:
             card.text(ov, CX + 128, CY + 94, sub, size=15, color=WHITE, z=22)
@@ -293,9 +308,12 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
         else:
             card.text(bg, cx, TY + 87, sub, size=10.5, color=MUTED, ha="center")
 
-    # ---------------------------------------------------------------- pastilles de confirmation
+    # ---------------------------------------------------------------- pastilles de confirmation (VIP) / invitation (public)
     CYc = 812
-    scored = [("sweep", "Liquidité"), ("stack", "OB + FVG"), ("volume", "Volume Profile"),
+    if footer:
+        _invite_bar(card, bg, ov, CYc, footer, contact)
+        return card.save(out_path)
+    scored =[("sweep", "Liquidité"), ("stack", "OB + FVG"), ("volume", "Volume Profile"),
               ("momentum", "RSI"), ("discount", "Discount" if long_ else "Premium"), ("session", "Session")]
     nsc = sum(1 for k, _ in scored if sig.checks.get(k))
     lab_t = card.text(bg, 48, CYc + 21, _spaced("Confirmations") + f"   {nsc}/6", size=10, color=MUTED)

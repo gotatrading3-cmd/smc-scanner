@@ -139,7 +139,8 @@ def htf_bias(df_htf: pd.DataFrame, entry_index: pd.DatetimeIndex, entry_minutes:
 # ------------------------------------------------------------------ moteur
 def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, display: str,
             tf_minutes: int = 60, asset_class: str = "fx", params: Optional[dict] = None,
-            only_last: bool = False, min_score: Optional[int] = None) -> List[Signal]:
+            only_last: bool = False, min_score: Optional[int] = None,
+            watch: Optional[list] = None) -> List[Signal]:
     """df : index = ouverture de bougie (UTC naif) ; colonnes open high low close
     tick_volume spread(points). bias : tableau aligne sur df (htf_bias)."""
     P = {**PARAMS, **(params or {})}
@@ -320,6 +321,18 @@ def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, displ
         if len(zones) > 60:
             zones = [z for z in zones if not z["dead"]][-40:]
 
+    # Zone d'interet proche (pour les posts "on surveille") : zone fraiche, dans le sens de la tendance, a moins de 1 ATR du prix
+    if watch is not None and n > 0 and bias_l[-1] != 0:
+        d, a, last_c = int(bias_l[-1]), atr[-1], c[-1]
+        best = None
+        for z in zones:
+            if z["dead"] or z["used"] or z["dir"] != d:
+                continue
+            dist = max(0.0, (last_c - z["hi"]) if d == 1 else (z["lo"] - last_c))
+            if dist <= 1.0 * a and (best is None or dist < best["dist_atr"] * a):
+                best = {"symbol": symbol, "display": display, "kind": z["kind"], "dir": d, "dist_atr": round(dist / a, 2)}
+        if best:
+            watch.append(best)
     return out
 
 

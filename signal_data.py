@@ -65,6 +65,11 @@ UNIVERSE: Dict[str, dict] = {
     "ETHUSD": dict(mt5="ETHUSD", yahoo="ETH-USD", cls="crypto"),
     "USOIL": dict(mt5="OILCash", yahoo=None, cls="oil"),
 }
+# Toutes les paires de devises majeures + croisees (28) : les exotiques sont exclues (spreads trop larges)
+_FX_EXTRA = ["EURGBP", "EURAUD", "EURCAD", "EURCHF", "EURNZD", "GBPAUD", "GBPCAD", "GBPCHF", "GBPNZD",
+             "AUDJPY", "AUDCAD", "AUDCHF", "AUDNZD", "CADJPY", "CADCHF", "CHFJPY", "NZDJPY", "NZDCAD", "NZDCHF"]
+for _p in _FX_EXTRA:
+    UNIVERSE.setdefault(_p, dict(mt5=_p, yahoo=f"{_p}=X", cls="fx"))
 # compat backtest : nom MT5 -> (id public, classe)
 WATCHLIST: Dict[str, Tuple[str, str]] = {v["mt5"]: (k, v["cls"]) for k, v in UNIVERSE.items()}
 

@@ -142,5 +142,157 @@
   "spread_pts": 3.0,
   "cls": "oil",
   "mt5": "OILCash"
+ },
+ "EURGBP": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 21.0,
+  "cls": "fx",
+  "mt5": "EURGBP"
+ },
+ "EURAUD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 34.0,
+  "cls": "fx",
+  "mt5": "EURAUD"
+ },
+ "EURCAD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 28.0,
+  "cls": "fx",
+  "mt5": "EURCAD"
+ },
+ "EURCHF": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 29.0,
+  "cls": "fx",
+  "mt5": "EURCHF"
+ },
+ "EURNZD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 40.0,
+  "cls": "fx",
+  "mt5": "EURNZD"
+ },
+ "GBPAUD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 38.0,
+  "cls": "fx",
+  "mt5": "GBPAUD"
+ },
+ "GBPCAD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 47.0,
+  "cls": "fx",
+  "mt5": "GBPCAD"
+ },
+ "GBPCHF": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 38.0,
+  "cls": "fx",
+  "mt5": "GBPCHF"
+ },
+ "GBPNZD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 65.0,
+  "cls": "fx",
+  "mt5": "GBPNZD"
+ },
+ "AUDJPY": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 100000.0,
+  "spread_pts": 31.0,
+  "cls": "fx",
+  "mt5": "AUDJPY"
+ },
+ "AUDCAD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 32.0,
+  "cls": "fx",
+  "mt5": "AUDCAD"
+ },
+ "AUDCHF": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 31.0,
+  "cls": "fx",
+  "mt5": "AUDCHF"
+ },
+ "AUDNZD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 37.0,
+  "cls": "fx",
+  "mt5": "AUDNZD"
+ },
+ "CADJPY": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 100000.0,
+  "spread_pts": 36.0,
+  "cls": "fx",
+  "mt5": "CADJPY"
+ },
+ "CADCHF": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 40.0,
+  "cls": "fx",
+  "mt5": "CADCHF"
+ },
+ "CHFJPY": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 100000.0,
+  "spread_pts": 27.0,
+  "cls": "fx",
+  "mt5": "CHFJPY"
+ },
+ "NZDJPY": {
+  "point": 0.001,
+  "digits": 3,
+  "contract": 100000.0,
+  "spread_pts": 32.0,
+  "cls": "fx",
+  "mt5": "NZDJPY"
+ },
+ "NZDCAD": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 39.0,
+  "cls": "fx",
+  "mt5": "NZDCAD"
+ },
+ "NZDCHF": {
+  "point": 1e-05,
+  "digits": 5,
+  "contract": 100000.0,
+  "spread_pts": 39.0,
+  "cls": "fx",
+  "mt5": "NZDCHF"
  }
 }

@@ -1,18 +1,21 @@
 """
-signal_runner.py - Canal de signaux GOTA Confluence. Tourne :
-  * en CLOUD (GitHub Actions, gratuit, PC eteint)  : python signal_runner.py --once     (backend yahoo)
-  * en LOCAL (PC Windows + MT5)                   : python signal_runner.py            (boucle 60 s)
+signal_runner.py - Canal de signaux GOTA Confluence, DEUX audiences. Tourne :
+  * en CLOUD (GitHub Actions, PC eteint)  : python signal_runner.py --once     (backend yahoo)
+  * en LOCAL (PC Windows + MT5)          : python signal_runner.py            (boucle 60 s)
+
+  GROUPE VIP    : TOUS les signaux, en detail (fiche + analyse), suivi de chaque objectif / stop, bilan hebdo
+  GROUPE PUBLIC : QUELQUES signaux par jour en entier ("deja dans le VIP") + leur suivi (gains ET pertes), point du matin,
+                  New York, bilan du soir, week-end, conseils ; chaque image porte un lien pour nous ecrire
+                  -> un groupe qui vit toute la journee et qui pousse vers le VIP
 
     python signal_runner.py --once          # un seul cycle (mode cloud)
-    python signal_runner.py --demo          # envoie un EXEMPLE (signal historique) en APERCU
-    python signal_runner.py --demo --no-send# genere les images en local sans rien envoyer
-    python signal_runner.py --test          # TEST 'vue abonnes' dans ton chat prive (gagnant + perdant + conseil)
-    python signal_runner.py --check-channel # verifie que le bot peut publier (ne poste rien)
-    python signal_runner.py --setup         # assistant : canal, lien prive, activation
-    python signal_runner.py --recap|--promo|--edu   # apercus de contenu
+    python signal_runner.py --test          # TEST 'vue abonnes' (VIP puis public) dans ton chat prive
+    python signal_runner.py --demo [--no-send]   # un exemple historique complet (apercu)
+    python signal_runner.py --brief|--edu|--cta|--recap|--pinned   # apercus de contenu
+    python signal_runner.py --check-channel # verifie que le bot peut publier dans les 2 groupes (ne poste rien)
 
-MODE APERCU PAR DEFAUT : rien n'est publie a ta communaute tant que "live" n'est pas active (channel.json
-ou variable GitHub SIGNALS_LIVE=true) ET qu'un canal est configure. LECTURE SEULE cote marche : aucun ordre.
+MODE APERCU PAR DEFAUT : chaque audience n'est publiee pour de bon que si elle est activee (SIGNALS_LIVE pour le VIP,
+PUBLIC_LIVE pour le public) ET qu'un groupe est configure. LECTURE SEULE cote marche : aucun ordre.
 """
 from __future__ import annotations
 import io
@@ -30,8 +33,10 @@ import pandas as pd
 import signal_data as sd
 from signal_data import connect, shutdown, get_rates, get_tick, symbol_meta, UNIVERSE, available_ids, utc_now, TF_MIN
 from signal_engine import Signal, TradeSim, analyze, htf_bias, summarize
-from signal_publisher import Publisher, load_cfg, save_cfg, pinned_text, CHANNEL_ABOUT
-from chart_render import render_signal_chart, render_recap_card, GREEN, RED, GOLD, BLUE, WHITE
+from signal_publisher import Publisher, load_cfg, save_cfg, pinned_text, CHANNEL_ABOUT_PUBLIC
+import signal_content as content
+import signal_market as market
+from chart_render import render_signal_chart, render_recap_card, GREEN, RED, GOLD, BLUE, WHITE, TF_LABEL
 
 if hasattr(sys.stdout, "buffer"):
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
@@ -50,10 +55,20 @@ CYCLE_SECONDS = 60
 OUTAGE_ALERT_RUNS = 4            # nb d'executions consecutives sans aucune donnee avant alerte au proprietaire
 _stats = {"ok": 0, "fail": 0}
 
+# Depot PUBLIC (GitHub gratuit) : ce qui concerne les signaux en cours reste PRIVE.
+#  - SIGNALS_STATE_KEY : cle Fernet ; les signaux actifs (niveaux) et les dates de signal sont CHIFFRES dans la branche "data"
+#    (l'historique des trades clotures reste en clair : c'est la piste d'audit publique)
+#  - SIGNALS_QUIET_LOG=1 : paire / sens / score des signaux absents de la sortie des journaux GitHub
+STATE_KEY = os.environ.get("SIGNALS_STATE_KEY", "").strip()
+QUIET_LOG = str(os.environ.get("SIGNALS_QUIET_LOG", "")).strip().lower() in ("1", "true", "yes")
+PRIVATE_KEYS = ("active", "last_signal")
 
-def log(msg: str) -> None:
-    line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
-    print(line, flush=True)
+
+def _stamp() -> str:
+    return f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
+
+
+def _to_file(line: str) -> None:
     try:
         with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -61,22 +76,55 @@ def log(msg: str) -> None:
         pass
 
 
+def log(msg: str) -> None:
+    line = f"{_stamp()} {msg}"
+    print(line, flush=True)
+    _to_file(line)
+
+
+def logp(msg: str, detail: str) -> None:
+    """Journal avec detail PRIVE (paire, sens, score) : le detail va dans signals.log mais pas dans la sortie si SIGNALS_QUIET_LOG=1."""
+    full = f"{_stamp()} {msg} : {detail}"
+    print(f"{_stamp()} {msg}" if QUIET_LOG else full, flush=True)
+    _to_file(full)
+
+
+def _fernet():
+    from cryptography.fernet import Fernet
+    return Fernet(STATE_KEY.encode())
+
+
 # ------------------------------------------------------------------ etat / historique
 def load_state() -> dict:
-    st = {"version": 2, "started": utc_now().isoformat(), "last_bar": {}, "next_check": {}, "active": {},
-          "per_day": {}, "last_signal": {}, "sched": {}, "previewed": [], "data_fail_runs": 0, "outage_alerted": False}
+    st = {"version": 3, "started": utc_now().isoformat(), "last_bar": {}, "next_check": {}, "active": {}, "per_day": {},
+          "last_signal": {}, "sched": {}, "previewed": [], "data_fail_runs": 0, "outage_alerted": False,
+          "watch": {}, "copy_idx": {}, "pub_posts": {}, "pub_sig": {}, "snap": {}}
     if STATE_FILE.exists():
         try:
-            st.update(json.loads(STATE_FILE.read_text(encoding="utf-8")))
+            raw = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         except Exception as e:
             log(f"[STATE] illisible ({e}) - etat neuf")
+            return st
+        enc = raw.pop("private_enc", None)
+        st.update(raw)
+        if enc:                                             # donnees privees chiffrees : jamais d'etat neuf en silence
+            if not STATE_KEY:
+                raise RuntimeError("etat chiffre mais SIGNALS_STATE_KEY est absente : arret pour ne pas perdre les signaux en cours")
+            try:
+                st.update(json.loads(_fernet().decrypt(enc.encode()).decode()))
+            except Exception as e:
+                raise RuntimeError(f"etat chiffre illisible ({type(e).__name__}) : cle incorrecte ? arret") from None
     return st
 
 
 def save_state(st: dict) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    out = dict(st)
+    if STATE_KEY:
+        priv = {k: out.pop(k) for k in PRIVATE_KEYS if k in out}
+        out["private_enc"] = _fernet().encrypt(json.dumps(priv, default=str).encode()).decode()
     tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(st, indent=1, default=str), encoding="utf-8")
+    tmp.write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
     os.replace(tmp, STATE_FILE)
 
 
@@ -98,8 +146,19 @@ def load_history() -> List[dict]:
     return out
 
 
+def scoped_history(pubs: tuple) -> List[dict]:
+    """Historique a annoncer : quand le VIP est en direct, seulement les trades reellement publies aux membres (pas les apercus)."""
+    hist = load_history()
+    return [r for r in hist if r.get("mode") == "live"] if pubs[0].live else hist
+
+
 def tf_key_of(sig: Signal) -> str:
     return {60: "1h", 240: "4h"}[int(sig.tf.rstrip("m"))]
+
+
+def make_pubs(cfg: dict) -> tuple:
+    """(publieur VIP, publieur PUBLIC)."""
+    return Publisher(cfg, log=log, audience="vip"), Publisher(cfg, log=log, audience="public")
 
 
 # ------------------------------------------------------------------ exposition (garde-fou de correlation)
@@ -128,8 +187,9 @@ def net_exposure(active: Dict[str, dict]) -> Dict[str, int]:
 # ------------------------------------------------------------------ scan
 def scan_symbol(sid: str, cls: str, st: dict, cfg: dict, now: pd.Timestamp) -> list:
     """Retourne [(signal, df, meta), ...] : signaux formes sur les bougies cloturees DEPUIS le dernier passage.
-    RATTRAPAGE : le planificateur gratuit de GitHub est irregulier (en pratique ~1 execution / 1h30 au lieu de 15 min),
-    donc on n'ignore aucune bougie ; un signal en retard n'est publie que s'il est encore valable (voir is_fresh)."""
+    RATTRAPAGE : le planificateur gratuit de GitHub est irregulier, donc on n'ignore aucune bougie ; un signal en
+    retard n'est publie que s'il est encore valable (voir is_fresh). Memorise aussi la zone d'interet la plus proche
+    (posts 'on surveille')."""
     tf = cfg["timeframe"]
     tfm = TF_MIN[tf]
     htf, htfm = HTF[tf]
@@ -152,7 +212,9 @@ def scan_symbol(sid: str, cls: str, st: dict, cfg: dict, now: pd.Timestamp) -> l
     if meta is None:
         return []
     bias = htf_bias(dfh, df1.index, tfm, htf_minutes=htfm)
-    sigs = analyze(df1, bias, meta["point"], sid, sid, tfm, cls, only_last=False, min_score=cfg["min_score"])
+    wl: list = []
+    sigs = analyze(df1, bias, meta["point"], sid, sid, tfm, cls, only_last=False, min_score=cfg["min_score"], watch=wl)
+    st["watch"][sid] = wl[0] if wl else None
     if prev is None:                                         # premier passage : seulement la derniere bougie (pas d'historique)
         new = [s for s in sigs if s.bar_open == last.isoformat()]
     else:
@@ -212,7 +274,7 @@ def choose(cands: list, st: dict, cfg: dict, now: pd.Timestamp) -> list:
                     why = f"exposition {k} deja au maximum"
                     break
         if why:
-            log(f"[SKIP] {s.display} {s.direction} score {s.score}/6 : {why}")
+            logp("[SKIP] signal ecarte", f"{s.display} {s.direction} score {s.score}/6 : {why}")
             continue
         chosen.append(c)
         for k, v in exposures(s.display, s.direction).items():
@@ -221,27 +283,46 @@ def choose(cands: list, st: dict, cfg: dict, now: pd.Timestamp) -> list:
     return chosen
 
 
-def publish_signal(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pub: Publisher, cfg: dict) -> bool:
+def publish_signal(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pubs: tuple, cfg: dict) -> bool:
+    """VIP : TOUS les signaux (fiche complete + analyse).
+    PUBLIC : seulement les premiers signaux du jour (public_signals_per_day), en entier, avec "deja dans le VIP" et un lien
+    pour nous ecrire sous l'image. Les suivants restent reserves au VIP."""
+    pub_vip, pub_pub = pubs
     OUT_DIR.mkdir(exist_ok=True)
     img = OUT_DIR / f"{sig.id}.png"
     render_signal_chart(df1, sig, str(img), digits=meta["digits"], brand=cfg["brand"])
-    mid = pub.post_signal(sig, str(img), meta["digits"])
+    mid = pub_vip.post_signal(sig, str(img), meta["digits"])
     if mid is None:
-        log(f"[PUB] ECHEC publication {sig.id} (Telegram) - non enregistre")
+        log(f"[PUB] ECHEC publication VIP {sig.id} (Telegram) - non enregistre")
         return False
     now = utc_now()
+    day = str(now.date())
+    public_id = None
+    if st["pub_sig"].get(day, 0) < int(cfg.get("public_signals_per_day", 2)):
+        try:
+            pimg = OUT_DIR / f"{sig.id}_public.png"
+            render_signal_chart(df1, sig, str(pimg), digits=meta["digits"], brand=cfg["brand"],
+                                footer=content.footer("new"), contact=pub_pub.handle)
+            text = content.public_signal(st, sig.display, TF_LABEL.get(sig.tf, sig.tf), sig.direction)
+            public_id = pub_pub.post_public(text, img=str(pimg), notify=True)
+            if public_id:
+                st["pub_sig"][day] = st["pub_sig"].get(day, 0) + 1
+        except Exception as e:
+            log(f"[PUB] signal public non publie ({e})")
     st["active"][sig.id] = {"signal": sig.to_dict(), "sim": TradeSim(sig).to_dict(), "msg_id": mid,
-                            "digits": meta["digits"], "published": now.isoformat(),
-                            "mode": "live" if pub.live else "preview"}
-    st["per_day"][str(now.date())] = st["per_day"].get(str(now.date()), 0) + 1
+                            "public_msg_id": public_id, "digits": meta["digits"], "published": now.isoformat(),
+                            "mode": "live" if pub_vip.live else "preview"}
+    st["per_day"][day] = st["per_day"].get(day, 0) + 1
     st["last_signal"][sig.symbol] = now.isoformat()
-    log(f"[SIGNAL] {'LIVE' if pub.live else 'APERCU'} {sig.display} {sig.direction} grade {sig.grade} ({sig.score}/6) "
-        f"entree {sig.entry:.{meta['digits']}f} SL {sig.sl:.{meta['digits']}f} TP1 {sig.tps[0]:.{meta['digits']}f}")
+    logp(f"[SIGNAL] VIP {'LIVE' if pub_vip.live else 'APERCU'} / PUBLIC "
+         f"{('LIVE' if pub_pub.live else 'APERCU') if public_id else 'non montre'}",
+         f"{sig.display} {sig.direction} grade {sig.grade} ({sig.score}/6)")
     return True
 
 
 # ------------------------------------------------------------------ suivi des signaux actifs
-def update_active(st: dict, pub: Publisher, cfg: dict) -> None:
+def update_active(st: dict, pubs: tuple, cfg: dict) -> None:
+    pub_vip, pub_pub = pubs
     for sid, rec in list(st["active"].items()):
         sig = Signal.from_dict(rec["signal"])
         sim = TradeSim.from_dict(rec["sim"])
@@ -260,23 +341,28 @@ def update_active(st: dict, pub: Publisher, cfg: dict) -> None:
             if sim.closed:
                 break
         rec["sim"] = sim.to_dict()
+        # signal ne en APERCU alors que le VIP est maintenant en direct : jamais annonce aux membres -> suivi silencieux
+        orphan = rec.get("mode", "preview") == "preview" and pub_vip.live
         for ev in events:
-            img = None
-            if ev["type"] in ("TP1", "TP3", "SL", "BE", "EXPIRED"):
-                img = _result_image(sig, ev, sim, rec["digits"], cfg)
-            pub.post_update(sig, ev, sim.r, rec["msg_id"], img)
-            log(f"[SUIVI] {sig.display} {ev['type']} @ {ev['price']:.{rec['digits']}f}  (R cumule {sim.r:+.2f})")
+            if not orphan:
+                img = _result_image(sig, ev, sim, rec["digits"], cfg) if ev["type"] in _IMG_EVENTS else None
+                pub_vip.post_update(sig, ev, sim.r, rec["msg_id"], img)                   # VIP : suivi detaille
+                if rec.get("public_msg_id") and cfg.get("public_progress", True):         # PUBLIC : seulement les signaux montres
+                    _public_progress(sig, ev, sim, rec["public_msg_id"], rec["digits"], st, pub_pub, cfg)
+            logp("[SUIVI] evenement" + (" (apercu, non publie)" if orphan else ""), f"{sig.display} {ev['type']} (R cumule {sim.r:+.2f})")
         if sim.closed:
             append_history({"id": sig.id, "display": sig.display, "direction": sig.direction, "grade": sig.grade,
                             "score": sig.score, "signal_time": sig.signal_time, "entry": sig.entry, "sl": sig.sl,
                             "tps": sig.tps, "outcome": sim.outcome, "r": round(sim.r, 3),
-                            "close_time": sim.close_time, "mode": rec.get("mode", "preview")})
+                            "close_time": sim.close_time, "mode": rec.get("mode", "preview"),
+                            "public": bool(rec.get("public_msg_id"))})
             del st["active"][sid]
-            log(f"[CLOTURE] {sig.display} {sim.outcome} {sim.r:+.2f}R")
+            logp("[CLOTURE] trade clos", f"{sig.display} {sim.outcome} {sim.r:+.2f}R")
 
 
 _LABELS = {"TP1": ("TP1 ATTEINT", GREEN), "TP3": ("TP3 ATTEINT", GREEN), "SL": ("STOP TOUCHÉ", RED),
-           "BE": ("CLÔTURE À L'ENTRÉE", BLUE), "EXPIRED": ("SETUP EXPIRÉ", GOLD)}
+           "BE": ("CLÔTURE À L'ENTRÉE", BLUE), "EXPIRED": ("CLÔTURE AU TEMPS", GOLD)}
+_IMG_EVENTS = tuple(_LABELS)                     # evenements qui ont une carte de resultat (TP2 : texte seul)
 
 
 def _result_payload(ev_type: str, sim: TradeSim) -> dict:
@@ -287,26 +373,40 @@ def _result_payload(ev_type: str, sim: TradeSim) -> dict:
     return {"label": label, "r": sim.r, "sub": sub, "color": color, "hit": list(sim.hit), "stopped": ev_type == "SL"}
 
 
-def _result_image(sig: Signal, ev: dict, sim: TradeSim, digits: int, cfg: dict) -> Optional[str]:
+def _result_image(sig: Signal, ev: dict, sim: TradeSim, digits: int, cfg: dict, footer: str = "", contact: str = "") -> Optional[str]:
+    """Carte de resultat (avec tous les niveaux). footer / contact : version PUBLIQUE (barre d'invitation en bas)."""
     try:
         df = get_rates(sig.symbol, tf_key_of(sig), 400)
         if df is None:
             return None
         k = df.index.get_loc(pd.Timestamp(sig.bar_open))
         OUT_DIR.mkdir(exist_ok=True)
-        p = OUT_DIR / f"{sig.id}_{ev['type']}.png"
+        p = OUT_DIR / f"{sig.id}_{ev['type']}{'_public' if footer else ''}.png"
         render_signal_chart(df, sig, str(p), digits=digits, n_after=min(len(df) - 1 - k, 40), brand=cfg["brand"],
-                            result=_result_payload(ev["type"], sim))
+                            result=_result_payload(ev["type"], sim), footer=footer, contact=contact)
         return str(p)
     except Exception as e:
         log(f"[IMG] resultat sans image ({e})")
         return None
 
 
+def _public_progress(sig: Signal, ev: dict, sim: TradeSim, reply_to: Optional[int], digits: int, st: dict,
+                     pub_pub: Publisher, cfg: dict) -> None:
+    """Suivi PUBLIC d'un signal montre (gains ET pertes, meme traitement) : texte humain + carte de resultat + lien."""
+    try:
+        kind = ev["type"]
+        text = content.progress(st, kind, sig.display, sim.r)
+        img = (_result_image(sig, ev, sim, digits, cfg, footer=content.footer(kind, sim.r), contact=pub_pub.handle)
+               if kind in _IMG_EVENTS else None)
+        pub_pub.post_public(text, img=img, reply_to=reply_to)
+    except Exception as e:
+        log(f"[PUB] suivi public non publie ({e})")
+
+
 # ------------------------------------------------------------------ bilans
 def _label_outcome(o: str) -> str:
-    return {"SL": "Stop touché", "TP1": "TP1 puis stop à l'entrée", "TP2": "TP2 atteint", "TP3": "TP3 atteint",
-            "EXPIRED": "Expiré"}.get(o, o)
+    return {"SL": "stop touché", "TP1": "TP1 puis stop à l'entrée", "TP2": "TP2 atteint", "TP3": "TP3 atteint",
+            "EXPIRED": "clôturé au temps"}.get(o, o)
 
 
 def _stats_line(recs: List[dict]) -> str:
@@ -314,19 +414,6 @@ def _stats_line(recs: List[dict]) -> str:
     if not s.get("n"):
         return "aucun trade clôturé"
     return f"{s['n']} signaux · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · <b>{s['total_r']:+.1f}R</b>"
-
-
-def post_daily_recap(st: dict, pub: Publisher, now: pd.Timestamp) -> bool:
-    hist = load_history()
-    today = [r for r in hist if str(r["close_time"])[:10] == str(now.date())]
-    if not today:
-        return False
-    tot = sum(r["r"] for r in today)
-    rows = "\n".join(f"• {r['display']} {'ACHAT' if r['direction'] == 'LONG' else 'VENTE'} → {_label_outcome(r['outcome'])} ({r['r']:+.2f}R)"
-                     for r in today)
-    text = (f"📊 <b>Bilan du {now.strftime('%d/%m')}</b>\n{rows}\n\n"
-            f"Jour : <b>{tot:+.2f}R</b>  ·  Cumul : {_stats_line(hist)}")
-    return pub.send_text(text, button=True) is not None
 
 
 def build_recap_image(st: dict, hist: List[dict], now: pd.Timestamp, week_only: bool, cfg: dict) -> Optional[str]:
@@ -347,75 +434,115 @@ def build_recap_image(st: dict, hist: List[dict], now: pd.Timestamp, week_only: 
     kpis = [("Signaux clôturés", s["n"], WHITE), ("Atteignent TP1", f"{s['tp1']:.0f}%", GREEN),
             ("Stops touchés", f"{s['sl']:.0f}%", RED), ("Résultat", f"{s['total_r']:+.1f}R", GREEN if s["total_r"] >= 0 else RED)]
     rows = [{"date": pd.Timestamp(r["close_time"]).strftime("%d/%m"), "symbol": r["display"], "dir": r["direction"],
-             "outcome": _label_outcome(r["outcome"]), "r": r["r"]} for r in reversed(recs)]
+             "outcome": _label_outcome(r["outcome"]).capitalize(), "r": r["r"]} for r in reversed(recs)]
     OUT_DIR.mkdir(exist_ok=True)
     p = OUT_DIR / f"recap_{'week' if week_only else 'all'}_{now:%Y%m%d}.png"
     render_recap_card(title, sub, kpis, rows, curve, str(p), brand=cfg["brand"])
     return str(p)
 
 
-def post_weekly_recap(st: dict, pub: Publisher, cfg: dict, now: pd.Timestamp) -> bool:
-    hist = load_history()
+def post_weekly_recap(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> bool:
+    """Bilan de la semaine : VIP (detail) et PUBLIC (meme carte, ton humain). Gains ET pertes."""
+    pub_vip, pub_pub = pubs
+    hist = scoped_history(pubs)
     img = build_recap_image(st, hist, now, True, cfg)
     if not img:
         return False
     wk = [r for r in hist if pd.Timestamp(r["close_time"]) >= (now - pd.Timedelta(days=now.weekday())).normalize()]
-    cap = f"📊 <b>Bilan de la semaine</b>\nSemaine : {_stats_line(wk)}\nCumul : {_stats_line(hist)}"
-    return pub.post_recap_image(img, cap) is not None
+    pub_vip.post_recap_image(img, f"📊 <b>Bilan de la semaine</b>\nSemaine : {_stats_line(wk)}\nCumul : {_stats_line(hist)}")
+    pub_pub.post_public(f"📊 <b>Bilan de la semaine côté VIP</b>\n{_stats_line(wk)}\n\nOn publie tout : les gains comme les pertes.", img=img)
+    return True
 
 
-# ------------------------------------------------------------------ posts programmes
-def scheduled(st: dict, pub: Publisher, cfg: dict, now: pd.Timestamp) -> None:
-    """Posts programmes. Fenetres LARGES : le planificateur gratuit de GitHub peut espacer les executions de plusieurs heures."""
-    sch, hm = st["sched"], now.hour * 60 + now.minute
+# ------------------------------------------------------------------ animation du groupe public
+def _snapshot_cached(st: dict, now: pd.Timestamp) -> dict:
+    """Etat REEL du marche (force des devises, tendances), rafraichi au plus toutes les 6 h."""
+    s = st.get("snap") or {}
+    if s.get("asof") and s.get("data") and (now - pd.Timestamp(s["asof"])) < pd.Timedelta(hours=6):
+        return s["data"]
+    data = market.snapshot()
+    st["snap"] = {"asof": now.isoformat(), "data": data}
+    return data
+
+
+def _watch_names(st: dict) -> List[str]:
+    return [w["display"] for w in (st.get("watch") or {}).values() if w]
+
+
+def _day_outcomes(day: pd.Timestamp, hist: List[dict]) -> List[dict]:
+    return [{"display": r["display"], "label": _label_outcome(r["outcome"]), "r": r["r"]}
+            for r in hist if str(r["close_time"])[:10] == str(day.date())]
+
+
+def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
+    """Calendrier du groupe PUBLIC. Fenetres LARGES (le planificateur gratuit de GitHub peut espacer les executions).
+    Tout est reel : etat du marche calcule, resultats de l'historique. Un seul post de chaque type par jour."""
+    pub_vip, pub_pub = pubs
+    sch, hm, wd = st["sched"], now.hour * 60 + now.minute, now.weekday()
     today = str(now.date())
+    handle = pub_pub.handle
+    cap = int(cfg.get("public_daily_max", 12))
 
     def in_win(h: int, m: int, length: int) -> bool:
-        start = h * 60 + m
-        return start <= hm < start + length
+        s0 = h * 60 + m
+        return s0 <= hm < s0 + length
 
-    def once_ok(kind: str, key: str) -> bool:
+    def can(kind: str, key: str) -> bool:
         if sch.get(kind) == key:
             return False
-        if not pub.live and kind in st["previewed"]:      # en apercu : un seul exemplaire de chaque type
+        if not pub_pub.live and kind in st["previewed"]:      # en apercu : un seul exemplaire de chaque type
+            return False
+        if pub_pub.live and st["pub_posts"].get(today, 0) >= cap:
             return False
         return True
 
-    if cfg.get("education_posts_per_day", 0) and in_win(8, 30, 360) and once_ok("edu", today):
-        pub.post_education(now.timetuple().tm_yday)
-        sch["edu"] = today
-        st["previewed"].append("edu")
-    if (cfg.get("promo_posts_per_day", 0) and str(cfg.get("private_link", "")).startswith("http")
-            and in_win(10, 30, 360) and once_ok("promo", today)):
-        pub.post_promo()
-        sch["promo"] = today
-        st["previewed"].append("promo")
+    def done(kind: str, key: str) -> None:
+        sch[kind] = key
+        if kind not in st["previewed"]:
+            st["previewed"].append(kind)
+        st["pub_posts"][today] = st["pub_posts"].get(today, 0) + 1
+
+    n_sig, n_active = st["per_day"].get(today, 0), len(st["active"])
+    if wd < 5 and in_win(6, 30, 300) and can("morning", today):                           # point du matin (donnees reelles)
+        pub_pub.post_public(content.morning(st, _snapshot_cached(st, now), _watch_names(st), handle))
+        done("morning", today)
+    if in_win(8, 30, 360) and can("edu", today):                                          # conseil du jour
+        pub_pub.post_public(content.education(st))
+        done("edu", today)
+    if wd < 5 and in_win(12, 30, 240) and can("ny", today):                               # ouverture de New York
+        pub_pub.post_public(content.new_york(st, n_sig, n_active, len(_watch_names(st))))
+        done("ny", today)
+    if in_win(15, 0, 300) and can("cta", today):                                          # invitation a nous ecrire
+        if wd in (1, 4):
+            pub_pub.post_public(content.promo(st, cfg.get("vip_perks", []), handle))
+        else:
+            pub_pub.post_public(content.cta(st, handle))
+        done("cta", today)
+    if wd == 5 and in_win(9, 0, 300) and can("sat", today):                               # samedi
+        pub_pub.post_public(content.weekend_saturday(st, handle))
+        done("sat", today)
+    if wd == 6 and in_win(17, 30, 240) and can("sun", today):                             # dimanche soir : plan de la semaine
+        pub_pub.post_public(content.weekend_sunday(st, _snapshot_cached(st, now)))
+        done("sun", today)
 
     # bilans : journee de trading qui vient de finir (fenetre 21:30 -> 05:30 UTC le lendemain)
-    if hm >= 21 * 60 + 30:
-        rd = now.normalize()
-    elif hm < 5 * 60 + 30:
-        rd = (now - pd.Timedelta(days=1)).normalize()
-    else:
-        rd = None
+    rd = now.normalize() if hm >= 21 * 60 + 30 else ((now - pd.Timedelta(days=1)).normalize() if hm < 5 * 60 + 30 else None)
     if rd is not None and rd.weekday() < 5:
         dkey = str(rd.date())
-        if cfg.get("daily_recap") and once_ok("daily", dkey):
-            post_daily_recap(st, pub, rd)
-            sch["daily"] = dkey
-            st["previewed"].append("daily")
+        if cfg.get("daily_recap") and can("evening", dkey):
+            pub_pub.post_public(content.evening(st, _day_outcomes(rd, scoped_history(pubs)), st["per_day"].get(dkey, 0), n_active))
+            done("evening", dkey)
         wkey = f"{rd.isocalendar()[0]}-W{rd.isocalendar()[1]}"
-        if cfg.get("weekly_recap") and rd.weekday() == 4 and once_ok("weekly", wkey):
-            post_weekly_recap(st, pub, cfg, now)
-            sch["weekly"] = wkey
-            st["previewed"].append("weekly")
+        if cfg.get("weekly_recap") and rd.weekday() == 4 and can("weekly", wkey):
+            post_weekly_recap(st, pubs, cfg, now)
+            done("weekly", wkey)
 
 
 # ------------------------------------------------------------------ cycle principal
-def run_cycle(st: dict, cfg: dict, pub: Publisher, ids: List[str]) -> None:
+def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
     now = utc_now()
     _stats["ok"] = _stats["fail"] = 0
-    update_active(st, pub, cfg)
+    update_active(st, pubs, cfg)
     cands = []
     for sid in ids:
         try:
@@ -427,19 +554,22 @@ def run_cycle(st: dict, cfg: dict, pub: Publisher, ids: List[str]) -> None:
         for r in found:
             reason = is_fresh(r[0], now, cfg)
             if reason:
-                log(f"[SKIP] {sid} {r[0].direction} {r[0].score}/6 : {reason}")
+                logp("[SKIP] signal ecarte", f"{sid} {r[0].direction} {r[0].score}/6 : {reason}")
                 continue
             cands.append(r)
-            log(f"[CANDIDAT] {sid} {r[0].direction} score {r[0].score}/6 grade {r[0].grade}")
+            logp("[CANDIDAT] setup valide", f"{sid} {r[0].direction} score {r[0].score}/6 grade {r[0].grade}")
     for sig, df1, meta in choose(cands, st, cfg, now):
-        publish_signal(sig, df1, meta, st, pub, cfg)
-    scheduled(st, pub, cfg, now)
+        publish_signal(sig, df1, meta, st, pubs, cfg)
+    try:
+        scheduled(st, pubs, cfg, now)
+    except Exception as e:
+        log(f"[SCHED] erreur : {e}\n{traceback.format_exc()[-400:]}")
     # alerte si la source de prix est indisponible depuis longtemps (au proprietaire uniquement)
     if _stats["ok"] == 0 and _stats["fail"] > 0:
         st["data_fail_runs"] = st.get("data_fail_runs", 0) + 1
         if st["data_fail_runs"] >= OUTAGE_ALERT_RUNS and not st.get("outage_alerted"):
-            pub.notify_owner("⚠️ <b>GOTA Signaux</b> : la source de prix ne répond plus depuis "
-                             f"{st['data_fail_runs']} cycles. Aucun signal ne peut être produit. Je réessaie automatiquement.")
+            pubs[0].notify_owner("⚠️ <b>GOTA Signaux</b> : la source de prix ne répond plus depuis "
+                                 f"{st['data_fail_runs']} exécutions. Aucun signal ne peut être produit. Je réessaie automatiquement.")
             st["outage_alerted"] = True
     elif _stats["ok"] > 0:
         st["data_fail_runs"], st["outage_alerted"] = 0, False
@@ -449,8 +579,8 @@ def run_cycle(st: dict, cfg: dict, pub: Publisher, ids: List[str]) -> None:
 def loop(once: bool = False) -> None:
     cfg = load_cfg()
     log("=== GOTA SIGNAUX - DEMARRAGE ===")
-    pub = Publisher(cfg, log=log)
-    log(f"  backend : {sd.BACKEND} | mode : {'LIVE (canal ' + str(cfg['channel_id']) + ')' if pub.live else 'APERCU (chat prive uniquement)'}")
+    pubs = make_pubs(cfg)
+    log(f"  backend : {sd.BACKEND} | VIP : {'LIVE' if pubs[0].live else 'APERCU'} | PUBLIC : {'LIVE' if pubs[1].live else 'APERCU'}")
     log(f"  timeframe {cfg['timeframe']} (biais {HTF[cfg['timeframe']][0]}) | score min {cfg['min_score']}/6 | max {cfg['max_signals_per_day']}/jour")
     if not connect(log=log):
         log("Source de donnees indisponible - arret")
@@ -462,10 +592,10 @@ def loop(once: bool = False) -> None:
                 log("[PAUSE] signaux en pause - aucun scan")
             else:
                 cfg = load_cfg()
-                pub = Publisher(cfg, log=log)
+                pubs = make_pubs(cfg)
                 want = cfg.get("symbols") or []
                 ids = [i for i in available_ids() if not want or i in want]
-                run_cycle(st, cfg, pub, ids)
+                run_cycle(st, cfg, pubs, ids)
                 log(f"[CYCLE] {len(ids)} symboles | donnees ok={_stats['ok']} echec={_stats['fail']} | actifs={len(st['active'])}")
         except Exception as e:
             log(f"[ERREUR] {e}\n{traceback.format_exc()[-600:]}")
@@ -481,7 +611,7 @@ def loop(once: bool = False) -> None:
     shutdown()
 
 
-# ------------------------------------------------------------------ demo / outils
+# ------------------------------------------------------------------ exemples / tests (jamais de vrai envoi public)
 def _closed_examples(cfg: dict) -> list:
     """Signaux HISTORIQUES recents (score >= 4) dont le trade est termine : [(heure, sig, df, meta, sim, tfm)], du plus ancien au plus recent."""
     tf = cfg["timeframe"]
@@ -507,41 +637,73 @@ def _closed_examples(cfg: dict) -> list:
     return out
 
 
-def _post_example(pub: Publisher, cfg: dict, sig: Signal, df1: pd.DataFrame, meta: dict, tfm: int,
-                  send: bool = True, max_updates: int = 2) -> None:
-    """Publie un signal historique (image + legende) puis ses mises a jour de resultat, comme en conditions reelles."""
+def _demo_result_image(df, sig, ev, sim, digits, cfg, footer: str = "", contact: str = ""):
+    k = df.index.get_loc(pd.Timestamp(sig.bar_open))
+    tev = pd.Timestamp(ev["time"])
+    j = df.index.get_loc(tev) if tev in df.index else len(df) - 1
+    p = OUT_DIR / f"demo_{sig.id}_{ev['type']}{'_public' if footer else ''}.png"
+    render_signal_chart(df.iloc[: j + 1], sig, str(p), digits=digits, n_after=min(j - k, 40), brand=cfg["brand"],
+                        result=_result_payload(ev["type"], sim), footer=footer, contact=contact)
+    return str(p)
+
+
+def _post_example(pubs: tuple, cfg: dict, st: dict, sig: Signal, df1: pd.DataFrame, meta: dict, tfm: int,
+                  send: bool = True, max_updates: int = 2, do_vip: bool = True, do_public: bool = True) -> None:
+    """Publie un signal HISTORIQUE comme en conditions reelles : VIP (fiche + analyse + suivi) et/ou PUBLIC (fiche + lien + suivi)."""
+    pub_vip, pub_pub = pubs
     OUT_DIR.mkdir(exist_ok=True)
-    img = OUT_DIR / f"demo_{sig.id}.png"
-    render_signal_chart(df1, sig, str(img), digits=meta["digits"], brand=cfg["brand"])
-    log(f"[EXEMPLE] image : {img}")
-    print("\n--- LEGENDE ---\n" + pub.signal_caption(sig, meta["digits"]).replace("<b>", "").replace("</b>", "")
-          .replace("<code>", "").replace("</code>", "").replace("<i>", "").replace("</i>", "") + "\n")
-    mid = pub.post_signal(sig, str(img), meta["digits"]) if send else None
-    if send:
-        log(f"[EXEMPLE] signal {sig.id} envoye (message {mid})")
+    mid = pid = None
+    if do_vip:
+        img = OUT_DIR / f"demo_{sig.id}.png"
+        render_signal_chart(df1, sig, str(img), digits=meta["digits"], brand=cfg["brand"])
+        log(f"[EXEMPLE] image VIP : {img}")
+        if send:
+            mid = pub_vip.post_signal(sig, str(img), meta["digits"])
+    if do_public:
+        pimg = OUT_DIR / f"demo_{sig.id}_public.png"
+        render_signal_chart(df1, sig, str(pimg), digits=meta["digits"], brand=cfg["brand"],
+                            footer=content.footer("new"), contact=pub_pub.handle)
+        log(f"[EXEMPLE] image PUBLIC : {pimg}")
+        if send:
+            pid = pub_pub.post_public(content.public_signal(st, sig.display, TF_LABEL.get(sig.tf, sig.tf), sig.direction),
+                                      img=str(pimg), notify=True)
     sim = TradeSim(sig)
     k0 = df1.index.get_loc(pd.Timestamp(sig.bar_open))
     shown = 0
     for j in range(k0 + 1, len(df1)):
         for ev in sim.feed(df1.index[j], float(df1["high"].iloc[j]), float(df1["low"].iloc[j]), float(df1["close"].iloc[j]), bar_minutes=tfm):
-            if ev["type"] in ("TP1", "TP3", "SL", "BE", "EXPIRED") and shown < max_updates:
-                p = _demo_result_image(df1, sig, ev, sim, meta["digits"], cfg)
-                log(f"[EXEMPLE] image resultat ({ev['type']}) : {p}")
-                if send:
-                    pub.post_update(sig, ev, sim.r, mid, p)
+            if ev["type"] in _IMG_EVENTS and shown < max_updates:
+                if do_vip:
+                    p = _demo_result_image(df1, sig, ev, sim, meta["digits"], cfg)
+                    if send:
+                        pub_vip.post_update(sig, ev, sim.r, mid, p)
+                if do_public and cfg.get("public_progress", True):
+                    pp = _demo_result_image(df1, sig, ev, sim, meta["digits"], cfg, footer=content.footer(ev["type"], sim.r), contact=pub_pub.handle)
+                    log(f"[EXEMPLE] image PUBLIC {ev['type']} : {pp}")
+                    if send:
+                        pub_pub.post_public(content.progress(st, ev["type"], sig.display, sim.r), img=pp, reply_to=pid)
                 shown += 1
         if sim.closed:
             break
 
 
+def _preview_pubs(cfg: dict, native: bool = False) -> tuple:
+    """Deux publieurs forces en APERCU (destination = TON chat prive, sans sonnerie). native=True : aucune mention 'apercu'
+    (rendu identique aux groupes)."""
+    cfg = dict(cfg, live=False, public_live=False)
+    pubs = make_pubs(cfg)
+    for p in pubs:
+        p.live, p.target = False, p.owner_chat
+        if native:
+            p._tag = lambda: ""
+    return pubs
+
+
 def demo() -> None:
-    """Envoie un EXEMPLE en APERCU : un signal historique recent (avec son resultat) de la watchlist."""
+    """Envoie UN exemple historique complet en APERCU (VIP + public)."""
     cfg = load_cfg()
-    cfg["live"] = False
-    pub = Publisher(cfg, log=log)
-    pub.live, pub.target = False, pub.owner_chat
-    pub._tag = lambda: ("🧪 <b>EXEMPLE</b> · signal <u>historique</u> pour montrer le rendu — "
-                        "ce n'est PAS un signal en cours, et il n'est visible que par toi\n\n")
+    pubs = _preview_pubs(cfg)
+    st = load_state()
     if not connect(log=log):
         log("Source de donnees indisponible")
         return
@@ -551,20 +713,20 @@ def demo() -> None:
         shutdown()
         return
     best = max(ex, key=lambda t: (t[0], t[1].score))
-    _post_example(pub, cfg, best[1], best[2], best[3], best[5], send="--no-send" not in sys.argv)
+    _post_example(pubs, cfg, st, best[1], best[2], best[3], best[5], send="--no-send" not in sys.argv)
     shutdown()
 
 
 def followers_test() -> None:
-    """TEST 'VUE ABONNES' : envoie dans TON chat prive exactement ce que verront tes abonnes (aucune mention d'apercu) :
-    un signal gagnant + ses resultats, un signal perdant + son stop, un conseil du jour. Exemples historiques."""
+    """TEST 'VUE ABONNES' : envoie dans TON chat prive (sans sonnerie, sans mention d'apercu) ce que verra chaque groupe :
+    1/2 le groupe VIP : un signal complet (fiche + analyse + suivi)
+    2/2 le groupe PUBLIC : les signaux montres en entier ("deja dans le VIP") + leur suivi (un gain, une perte) + le rythme de la journee.
+    Exemples HISTORIQUES : rien n'est publie dans les vrais groupes."""
     cfg = load_cfg()
-    cfg["live"] = False
-    if not str(cfg.get("private_link", "")).startswith("http"):
-        cfg["private_link"] = "https://t.me/GotatradingBot"        # juste pour montrer le bouton (sera ton canal prive)
-    pub = Publisher(cfg, log=log)
-    pub.live, pub.target = False, pub.owner_chat                   # envoi UNIQUEMENT dans ton chat prive
-    pub._tag = lambda: ""                                          # rendu natif : identique a ce que voit un abonne
+    pubs = _preview_pubs(cfg, native=True)
+    pub_vip, pub_pub = pubs
+    st = load_state()
+    st["copy_idx"] = {}                                   # le test montre toujours les premieres variantes
     send = "--no-send" not in sys.argv
     if not connect(log=log):
         log("Source de donnees indisponible")
@@ -576,88 +738,89 @@ def followers_test() -> None:
         log(f"Exemples insuffisants (gagnants={len(wins)}, perdants={len(loss)})")
         shutdown()
         return
+    picks = (("GAGNANT", max(wins, key=lambda t: t[0])), ("PERDANT", max(loss, key=lambda t: t[0])))
     if send:
-        pub.send_text("🧪 <b>Test « vue abonnés »</b>\nVoici exactement ce que verront tes abonnés : un signal gagnant, "
-                      "un signal perdant, un conseil du jour. Exemples historiques, visibles uniquement par toi.")
-    for label, e in (("GAGNANT", max(wins, key=lambda t: t[0])), ("PERDANT", max(loss, key=lambda t: t[0]))):
-        log(f"[TEST] exemple {label} : {e[1].id} -> {e[4].outcome} {e[4].r:+.2f}R")
-        _post_example(pub, cfg, e[1], e[2], e[3], e[5], send=send, max_updates=2 if label == "GAGNANT" else 1)
+        pub_vip.send_text("🧪 <b>Test « vue abonnés » — 1/2 : le groupe VIP</b>\nLe VIP reçoit <b>tous</b> les signaux : la fiche complète, "
+                          "l'analyse détaillée, puis le suivi. Exemple historique (un gagnant), visible uniquement par toi.")
+    log(f"[TEST] VIP : {picks[0][1][1].id} -> {picks[0][1][4].outcome} {picks[0][1][4].r:+.2f}R")
+    e0 = picks[0][1]
+    _post_example(pubs, cfg, st, e0[1], e0[2], e0[3], e0[5], send=send, max_updates=1, do_vip=True, do_public=False)
     if send:
-        pub.post_education(utc_now().timetuple().tm_yday)
+        pub_pub.send_text(f"🧪 <b>Test « vue abonnés » — 2/2 : le groupe public</b>\nLe public voit <b>quelques signaux par jour</b> "
+                          f"({cfg.get('public_signals_per_day', 2)} maximum), en entier, avec « déjà dans le VIP », le lien pour nous écrire sous "
+                          "chaque image et le suivi (gain comme perte). Puis le rythme de la journée. Exemples historiques.")
+    for label, e in picks:
+        log(f"[TEST] PUBLIC {label} : {e[1].id} -> {e[4].outcome} {e[4].r:+.2f}R")
+        _post_example(pubs, cfg, st, e[1], e[2], e[3], e[5], send=send, max_updates=2 if label == "GAGNANT" else 1, do_vip=False, do_public=True)
+    if send:
+        snap = market.snapshot()
+        pub_pub.post_public(content.morning(st, snap, ["EURJPY", "AUDUSD"], pub_pub.handle))
+        outs = [{"display": e[1].display, "label": _label_outcome(e[4].outcome), "r": e[4].r} for _, e in picks]
+        pub_pub.post_public(content.evening(st, outs, 2, 0))
+        pub_pub.post_public(content.education(st))
+        pub_pub.post_public(content.cta(st, pub_pub.handle))
     shutdown()
-
-
-def _demo_result_image(df, sig, ev, sim, digits, cfg):
-    k = df.index.get_loc(pd.Timestamp(sig.bar_open))
-    tev = pd.Timestamp(ev["time"])
-    j = df.index.get_loc(tev) if tev in df.index else len(df) - 1
-    p = OUT_DIR / f"demo_{sig.id}_{ev['type']}.png"
-    render_signal_chart(df.iloc[: j + 1], sig, str(p), digits=digits, n_after=min(j - k, 40), brand=cfg["brand"],
-                        result=_result_payload(ev["type"], sim))
-    return str(p)
 
 
 def setup_wizard() -> None:
     cfg = load_cfg()
-    print("\n=== Assistant du canal de signaux GOTA TRADING ===\n")
-    print("Avant de continuer, fais ceci dans Telegram :")
-    print("  1. Cree ton canal PUBLIC (ex: @gota_signaux)")
-    print("  2. Canal -> Administrateurs -> Ajouter -> choisis TON bot -> coche 'Publier des messages'")
-    print("  3. Cree ton canal PRIVE et copie son lien d'invitation (https://t.me/+xxxx)\n")
-    ch = input(f"Canal public (@nom ou -100...) [{cfg.get('channel_id') or 'vide'}] : ").strip() or cfg.get("channel_id", "")
-    lk = input(f"Lien du canal prive [{cfg.get('private_link') or 'vide'}] : ").strip() or cfg.get("private_link", "")
-    cfg["channel_id"], cfg["private_link"] = ch, lk
+    print("\n=== Assistant GOTA Signaux ===\n")
+    print("Ajoute le bot comme ADMINISTRATEUR de tes groupes (Telegram > groupe > Administrateurs > Ajouter).\n")
+    for key, label in (("vip_chat_id", "Identifiant du groupe VIP (-100...)"), ("channel_id", "Groupe public (@nom ou -100...)"),
+                       ("contact_link", "Lien de contact pour 'nous ecrire' (https://t.me/ton_utilisateur)")):
+        cfg[key] = input(f"{label} [{cfg.get(key) or 'vide'}] : ").strip() or cfg.get(key, "")
     save_cfg(cfg)
-    pub = Publisher(cfg)
-    res = pub.check_channel()
-    print("\nVerification :", res["detail"])
-    if not res["ok"]:
-        print("Corrige puis relance l'assistant. Le mode reste en APERCU (rien n'est publie).")
-        return
-    if input("\nEnvoyer un message de test dans le canal ? (o/N) : ").strip().lower() == "o":
-        Publisher(dict(cfg, live=True)).send_text("✅ Connexion OK — le bot est prêt à publier ici.")
-    print("\nMode actuel : APERCU. Les signaux arrivent seulement dans ton chat prive.")
-    print("Conseil : laisse tourner en apercu plusieurs semaines pour juger les resultats REELS avant de publier.")
-    if input("Tape PUBLIER pour activer la publication REELLE dans le canal (Entree = rester en apercu) : ").strip() == "PUBLIER":
-        cfg["live"] = True
-        save_cfg(cfg)
-        print("Publication reelle ACTIVEE. (Pour revenir en apercu : \"live\": false dans channel.json)")
-    else:
-        cfg["live"] = False
-        save_cfg(cfg)
-        print("Reste en APERCU.")
+    for aud in ("vip", "public"):
+        print(Publisher(cfg, audience=aud).check_target()["detail"])
+    print("\nMode actuel : APERCU. Pour publier pour de bon, mets \"live\" (VIP) et/ou \"public_live\" (public) a true dans channel.json.")
+
+
+KNOWN_ARGS = {"--once", "--setup", "--check-channel", "--test", "--demo", "--brief", "--edu", "--cta", "--promo", "--recap",
+              "--pinned", "--post-pinned", "--no-send"}
 
 
 def main() -> None:
     a = sys.argv[1:]
+    unknown = [x for x in a if x.startswith("--") and x not in KNOWN_ARGS]
+    if unknown:                                               # jamais de boucle infinie sur une faute de frappe
+        print("Option inconnue : " + " ".join(unknown) + "\n\n" + (__doc__ or ""))
+        return
     if "--setup" in a:
         return setup_wizard()
     if "--check-channel" in a:
-        print(Publisher(load_cfg()).check_channel()["detail"])
+        cfg = load_cfg()
+        for aud in ("vip", "public"):
+            print(Publisher(cfg, audience=aud).check_target()["detail"])
+        return
+    if "--post-pinned" in a:                                  # guide VIP + accueil public, epingles (reel si le groupe est en direct)
+        pub_vip, pub_pub = make_pubs(load_cfg())
+        pub_vip.post_pinned()
+        pub_pub.post_welcome()
         return
     if "--test" in a:
         return followers_test()
     if "--demo" in a:
         return demo()
-    if any(x in a for x in ("--recap", "--promo", "--edu", "--pinned")):
+    if any(x in a for x in ("--brief", "--edu", "--cta", "--promo", "--recap", "--pinned")):
         cfg = load_cfg()
-        cfg["live"] = False
-        pub = Publisher(cfg, log=log)
-        pub.live, pub.target = False, pub.owner_chat
+        pub_vip, pub_pub = _preview_pubs(cfg)
         st = load_state()
         now = utc_now()
         if "--pinned" in a:
-            # apercu du message a epingler + du texte de description du canal (a coller a la main dans Telegram)
-            pub.send_text(pinned_text(cfg["brand"]))
-            pub.send_text("<b>Description du canal</b> (Telegram → canal → Modifier → Description) :\n\n" + CHANNEL_ABOUT)
-        if "--promo" in a:
-            pub.post_promo()
+            pub_vip.send_text(pinned_text(cfg["brand"]))
+            pub_pub.send_text("<b>Description du groupe public</b> (Telegram > groupe > Modifier > Description) :\n\n" + CHANNEL_ABOUT_PUBLIC)
+        if "--brief" in a:
+            pub_pub.post_public(content.morning(st, market.snapshot(), _watch_names(st), pub_pub.handle))
         if "--edu" in a:
-            pub.post_education(now.timetuple().tm_yday)
+            pub_pub.post_public(content.education(st))
+        if "--cta" in a:
+            pub_pub.post_public(content.cta(st, pub_pub.handle))
+        if "--promo" in a:
+            pub_pub.post_public(content.promo(st, cfg.get("vip_perks", []), pub_pub.handle))
         if "--recap" in a:
             img = build_recap_image(st, load_history(), now, False, cfg)
             if img:
-                pub.post_recap_image(img, "📊 <b>Bilan depuis le lancement</b> (aperçu)")
+                pub_pub.post_recap_image(img, "📊 <b>Bilan depuis le lancement</b>")
             else:
                 print("Aucun trade clôturé dans l'historique pour l'instant.")
         return

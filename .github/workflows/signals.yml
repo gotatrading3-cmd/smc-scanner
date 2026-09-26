@@ -1,19 +1,20 @@
 name: GOTA Signaux
 
 # Tourne dans le cloud GitHub (gratuit sur un depot public), PC eteint.
-# Par defaut : MODE APERCU (les messages n'arrivent que dans ton chat prive Telegram).
-# Publication vers le canal : variable SIGNALS_LIVE=true + secret CHANNEL_ID (voir README du systeme).
+# Deux audiences : groupe VIP (tous les signaux, en detail) et groupe public (quelques signaux + animation).
+# Publication reelle : variables SIGNALS_LIVE=true (VIP) et PUBLIC_LIVE=true (public). Sinon : apercu dans le chat prive.
+# Les signaux en cours sont CHIFFRES dans la branche data (secret SIGNALS_STATE_KEY) et les journaux ne montrent ni paire ni niveaux.
 
 on:
   schedule:
-    - cron: "3,18,33,48 * * * *"
+    - cron: "7,17,27,37,47,57 * * * *"
   workflow_dispatch:
     inputs:
       action:
-        description: "scan = cycle normal | demo = exemple en apercu | recap = apercu du bilan | edu = apercu conseil | pinned = texte a epingler | test = test 'vue abonnes' | promo = post d'invitation VIP"
+        description: "scan = cycle normal | guides = guide VIP + accueil public (epingles) | test = test vue abonnes | demo | brief | edu | cta | promo | recap | pinned = apercus"
         type: choice
         default: scan
-        options: [scan, demo, recap, edu, pinned, test, promo]
+        options: [scan, guides, test, demo, brief, edu, cta, promo, recap, pinned]
 
 concurrency:
   group: gota-signals
@@ -31,11 +32,17 @@ jobs:
       SIGNAL_BACKEND: yahoo
       SIGNALS_DATA_DIR: ${{ github.workspace }}/data
       PYTHONIOENCODING: utf-8
+      SIGNALS_QUIET_LOG: "1"
+      SIGNALS_STATE_KEY: ${{ secrets.SIGNALS_STATE_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      VIP_CHAT_ID: ${{ secrets.VIP_CHAT_ID }}
       CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
       PRIVATE_LINK: ${{ secrets.PRIVATE_LINK }}
+      CONTACT_LINK: ${{ vars.CONTACT_LINK }}
       SIGNALS_LIVE: ${{ vars.SIGNALS_LIVE }}
+      PUBLIC_LIVE: ${{ vars.PUBLIC_LIVE }}
+      PUBLIC_SIGNALS_PER_DAY: ${{ vars.PUBLIC_SIGNALS_PER_DAY }}
       SIGNALS_TF: ${{ vars.SIGNALS_TF }}
       SIGNALS_MIN_SCORE: ${{ vars.SIGNALS_MIN_SCORE }}
       SIGNALS_MAX_PER_DAY: ${{ vars.SIGNALS_MAX_PER_DAY }}
@@ -63,13 +70,16 @@ jobs:
           ACTION: ${{ github.event.inputs.action || 'scan' }}
         run: |
           case "$ACTION" in
-            demo)  python signal_runner.py --demo ;;
-            recap) python signal_runner.py --recap ;;
-            edu)   python signal_runner.py --edu ;;
+            guides) python signal_runner.py --post-pinned ;;
+            test)   python signal_runner.py --test ;;
+            demo)   python signal_runner.py --demo ;;
+            brief)  python signal_runner.py --brief ;;
+            edu)    python signal_runner.py --edu ;;
+            cta)    python signal_runner.py --cta ;;
+            promo)  python signal_runner.py --promo ;;
+            recap)  python signal_runner.py --recap ;;
             pinned) python signal_runner.py --pinned ;;
-            test)  python signal_runner.py --test ;;
-            promo) python signal_runner.py --promo ;;
-            *)     python signal_runner.py --once ;;
+            *)      python signal_runner.py --once ;;
           esac
 
       - name: Sauvegarder l'etat et l'historique (commit horodate = piste d'audit publique)
