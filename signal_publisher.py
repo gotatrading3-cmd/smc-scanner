@@ -41,11 +41,10 @@ DEFAULT_CFG = {
     "education_posts_per_day": 1,
     "daily_recap": True,
     "weekly_recap": True,
-    "button_text": "🔒 Analyse complète · canal privé",
+    "button_text": "🔒 Rejoindre le groupe VIP",
+    # Avantages du groupe VIP : uniquement ce qui existe VRAIMENT (a completer par le proprietaire).
     "private_perks": [
-        "Analyse détaillée de chaque setup (multi-timeframe)",
-        "Gestion du trade expliquée en direct",
-        "Échanges avec la communauté",
+        "Mes analyses personnelles des marchés",
     ],
 }
 # Avertissement COMPLET : affiche une seule fois (message epingle), jamais sur chaque fiche.
@@ -294,7 +293,7 @@ class Publisher:
     def post_promo(self) -> Optional[int]:
         link = str(self.cfg.get("private_link", "")).strip()
         perks = "\n".join(f"• {html.escape(str(p))}" for p in self.cfg.get("private_perks", []))
-        return self.send_text(f"🔒 <b>Canal privé {html.escape(self.cfg['brand'])}</b>\n{perks}", button=bool(link))
+        return self.send_text(f"🔒 <b>Groupe VIP {html.escape(self.cfg['brand'])}</b>\n{perks}", button=bool(link))
 
     def post_education(self, day_index: int) -> Optional[int]:
         return self.send_text(EDU_TIPS[day_index % len(EDU_TIPS)], button=True)
