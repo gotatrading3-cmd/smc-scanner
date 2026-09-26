@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import signal_data as sd
 from signal_data import connect, shutdown, get_history, symbol_meta, WATCHLIST
 from signal_engine import analyze, htf_bias, TradeSim, summarize, PARAMS, SCORED
 
@@ -85,6 +86,8 @@ def main():
     if not args.bars:
         args.bars = 26000 if args.tf == "1h" else 12000
     tag = "" if args.tf == "1h" else f"_{args.tf}"
+    if sd.BACKEND == "yahoo":                       # ne pas ecraser les rapports MT5
+        tag += "_yahoo"
 
     print(f"=== BACKTEST GOTA CONFLUENCE ({args.tf.upper()}, biais {htf_key.upper()}) ===")
     if not connect():
