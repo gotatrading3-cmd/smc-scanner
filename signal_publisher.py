@@ -232,15 +232,17 @@ class Publisher:
         long_ = s.direction == "LONG"
         f = lambda v: _pf(v, digits)
         rr = abs(s.tps[-1] - s.entry) / max(s.risk, 1e-12)
+        d = lambda v: _dist_txt(s, v)
         cap = [f"{'🟢' if long_ else '🔴'} <b>{'ACHAT' if long_ else 'VENTE'} {html.escape(s.display)}</b> · {_tf(s.tf)}",
                "",
                f"📍 Entrée   <code>{f(s.entry)}</code>",
-               f"🛑 Stop loss   <code>{f(s.sl)}</code>",
-               f"🎯 TP1   <code>{f(s.tps[0])}</code>",
-               f"🎯 TP2   <code>{f(s.tps[1])}</code>",
-               f"🎯 TP3   <code>{f(s.tps[2])}</code>",
+               f"🛑 Stop loss   <code>{f(s.sl)}</code>   <i>−{d(s.sl)}</i>",
+               f"🎯 TP1   <code>{f(s.tps[0])}</code>   <i>+{d(s.tps[0])}</i>",
+               f"🎯 TP2   <code>{f(s.tps[1])}</code>   <i>+{d(s.tps[1])}</i>",
+               f"🎯 TP3   <code>{f(s.tps[2])}</code>   <i>+{d(s.tps[2])}</i>",
                "",
-               f"R:R 1 : {rr:.0f}  ·  Grade {s.grade}"]
+               f"⚖️ Risque <b>{d(s.sl)}</b> · Reward <b>{d(s.tps[2])}</b> · R:R 1 : {rr:.0f}",
+               f"Grade {s.grade}"]
         htf = "journalière" if s.tf == "240m" else "H4"
         ok_lines = [f"Tendance {htf} {'haussière' if long_ else 'baissière'}",
                     f"Retest {'Order Block' if s.zone_kind == 'OB' else 'Fair Value Gap'} frais + rejet"]
@@ -309,16 +311,16 @@ def _tf(tf: str) -> str:
     return {"15m": "M15", "60m": "H1", "240m": "H4"}.get(tf, tf)
 
 
-def _dist_line(s: Signal) -> str:
-    """Distances depuis l'entree (pips pour le forex, unites de prix sinon) : valables sur n'importe quel courtier."""
+def _dist_txt(s: Signal, level: float) -> str:
+    """Distance depuis l'entree, lisible sur n'importe quel courtier : pips (forex), $ (crypto) ou points."""
     m = symbol_meta(s.display) or {}
     cls = UNIVERSE.get(s.display, {}).get("cls", "")
+    d = abs(level - s.entry)
     if cls == "fx" and m.get("point"):
-        pip = m["point"] * 10
-        f = lambda x: f"{abs(x - s.entry) / pip:.1f} pips"
-    else:
-        f = lambda x: f"{abs(x - s.entry):,.2f}".replace(",", " ")
-    return (f"↔️ Distances : stop {f(s.sl)} · TP1 {f(s.tps[0])} · TP2 {f(s.tps[1])} · TP3 {f(s.tps[2])}")
+        return f"{d / (m['point'] * 10):.1f} pips"
+    if cls == "crypto":
+        return f"{d:,.0f} $".replace(",", " ")
+    return f"{d:,.2f} pts".replace(",", " ")
 
 
 def _check_text(k: str, s: Signal, long_: bool) -> str:

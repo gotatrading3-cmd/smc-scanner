@@ -6,6 +6,7 @@ signal_runner.py - Canal de signaux GOTA Confluence. Tourne :
     python signal_runner.py --once          # un seul cycle (mode cloud)
     python signal_runner.py --demo          # envoie un EXEMPLE (signal historique) en APERCU
     python signal_runner.py --demo --no-send# genere les images en local sans rien envoyer
+    python signal_runner.py --test          # TEST 'vue abonnes' dans ton chat prive (gagnant + perdant + conseil)
     python signal_runner.py --check-channel # verifie que le bot peut publier (ne poste rien)
     python signal_runner.py --setup         # assistant : canal, lien prive, activation
     python signal_runner.py --recap|--promo|--edu   # apercus de contenu
@@ -259,18 +260,24 @@ _LABELS = {"TP1": ("TP1 ATTEINT", GREEN), "TP3": ("TP3 ATTEINT", GREEN), "SL": (
            "BE": ("CLÔTURE À L'ENTRÉE", BLUE), "EXPIRED": ("SETUP EXPIRÉ", GOLD)}
 
 
+def _result_payload(ev_type: str, sim: TradeSim) -> dict:
+    """Bandeau de la carte de resultat : a TP1 on annonce +1R sur 40 % ; le resultat TOTAL n'apparait qu'a la cloture."""
+    label, color = _LABELS.get(ev_type, (ev_type, GOLD))
+    sub = "+1R sur 40 % · stop à l'entrée" if ev_type == "TP1" else (
+        f"Résultat : {sim.r:+.2f} R" if ev_type == "SL" else f"Résultat final : {sim.r:+.2f} R")
+    return {"label": label, "r": sim.r, "sub": sub, "color": color, "hit": list(sim.hit), "stopped": ev_type == "SL"}
+
+
 def _result_image(sig: Signal, ev: dict, sim: TradeSim, digits: int, cfg: dict) -> Optional[str]:
     try:
         df = get_rates(sig.symbol, tf_key_of(sig), 400)
         if df is None:
             return None
         k = df.index.get_loc(pd.Timestamp(sig.bar_open))
-        label, color = _LABELS.get(ev["type"], (ev["type"], GOLD))
         OUT_DIR.mkdir(exist_ok=True)
         p = OUT_DIR / f"{sig.id}_{ev['type']}.png"
         render_signal_chart(df, sig, str(p), digits=digits, n_after=min(len(df) - 1 - k, 40), brand=cfg["brand"],
-                            result={"label": label, "r": sim.r, "color": color, "hit": list(sim.hit),
-                                    "stopped": ev["type"] == "SL"})
+                            result=_result_payload(ev["type"], sim))
         return str(p)
     except Exception as e:
         log(f"[IMG] resultat sans image ({e})")
@@ -444,22 +451,12 @@ def loop(once: bool = False) -> None:
 
 
 # ------------------------------------------------------------------ demo / outils
-def demo() -> None:
-    """Envoie un EXEMPLE en APERCU : un signal historique recent (avec son resultat) de la watchlist."""
-    cfg = load_cfg()
-    cfg["live"] = False
-    pub = Publisher(cfg, log=log)
-    pub.live, pub.target = False, pub.owner_chat
-    pub._tag = lambda: ("🧪 <b>EXEMPLE</b> · signal <u>historique</u> pour montrer le rendu — "
-                        "ce n'est PAS un signal en cours, et il n'est visible que par toi\n\n")
-    send = "--no-send" not in sys.argv
-    if not connect(log=log):
-        log("Source de donnees indisponible")
-        return
+def _closed_examples(cfg: dict) -> list:
+    """Signaux HISTORIQUES recents (score >= 4) dont le trade est termine : [(heure, sig, df, meta, sim, tfm)], du plus ancien au plus recent."""
     tf = cfg["timeframe"]
     tfm = TF_MIN[tf]
     htf, htfm = HTF[tf]
-    best = None
+    out = []
     for sid in available_ids():
         df1, dfh = get_rates(sid, tf, 900), get_rates(sid, htf, 1000 if htf == "4h" else 800)
         meta = symbol_meta(sid)
@@ -473,38 +470,89 @@ def demo() -> None:
                 sim.feed(df1.index[j], float(df1["high"].iloc[j]), float(df1["low"].iloc[j]), float(df1["close"].iloc[j]), bar_minutes=tfm)
                 if sim.closed:
                     break
-            if not sim.closed:
-                continue
-            key = (pd.Timestamp(s.signal_time), s.score)
-            if best is None or key > best[0]:
-                best = (key, s, df1, meta)
-    if not best:
-        log("Aucun exemple trouve.")
-        shutdown()
-        return
-    _, sig, df1, meta = best
+            if sim.closed:
+                out.append((pd.Timestamp(s.signal_time), s, df1, meta, sim, tfm))
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def _post_example(pub: Publisher, cfg: dict, sig: Signal, df1: pd.DataFrame, meta: dict, tfm: int,
+                  send: bool = True, max_updates: int = 2) -> None:
+    """Publie un signal historique (image + legende) puis ses mises a jour de resultat, comme en conditions reelles."""
     OUT_DIR.mkdir(exist_ok=True)
     img = OUT_DIR / f"demo_{sig.id}.png"
     render_signal_chart(df1, sig, str(img), digits=meta["digits"], brand=cfg["brand"])
-    log(f"[DEMO] image : {img}")
+    log(f"[EXEMPLE] image : {img}")
     print("\n--- LEGENDE ---\n" + pub.signal_caption(sig, meta["digits"]).replace("<b>", "").replace("</b>", "")
-          .replace("<code>", "").replace("</code>", "") + "\n")
+          .replace("<code>", "").replace("</code>", "").replace("<i>", "").replace("</i>", "") + "\n")
     mid = pub.post_signal(sig, str(img), meta["digits"]) if send else None
     if send:
-        log(f"[DEMO] signal {sig.id} envoye (message {mid})")
+        log(f"[EXEMPLE] signal {sig.id} envoye (message {mid})")
     sim = TradeSim(sig)
     k0 = df1.index.get_loc(pd.Timestamp(sig.bar_open))
     shown = 0
     for j in range(k0 + 1, len(df1)):
         for ev in sim.feed(df1.index[j], float(df1["high"].iloc[j]), float(df1["low"].iloc[j]), float(df1["close"].iloc[j]), bar_minutes=tfm):
-            if ev["type"] in ("TP1", "TP3", "SL", "BE", "EXPIRED") and shown < 2:
+            if ev["type"] in ("TP1", "TP3", "SL", "BE", "EXPIRED") and shown < max_updates:
                 p = _demo_result_image(df1, sig, ev, sim, meta["digits"], cfg)
-                log(f"[DEMO] image resultat : {p}")
+                log(f"[EXEMPLE] image resultat ({ev['type']}) : {p}")
                 if send:
                     pub.post_update(sig, ev, sim.r, mid, p)
                 shown += 1
         if sim.closed:
             break
+
+
+def demo() -> None:
+    """Envoie un EXEMPLE en APERCU : un signal historique recent (avec son resultat) de la watchlist."""
+    cfg = load_cfg()
+    cfg["live"] = False
+    pub = Publisher(cfg, log=log)
+    pub.live, pub.target = False, pub.owner_chat
+    pub._tag = lambda: ("🧪 <b>EXEMPLE</b> · signal <u>historique</u> pour montrer le rendu — "
+                        "ce n'est PAS un signal en cours, et il n'est visible que par toi\n\n")
+    if not connect(log=log):
+        log("Source de donnees indisponible")
+        return
+    ex = _closed_examples(cfg)
+    if not ex:
+        log("Aucun exemple trouve.")
+        shutdown()
+        return
+    best = max(ex, key=lambda t: (t[0], t[1].score))
+    _post_example(pub, cfg, best[1], best[2], best[3], best[5], send="--no-send" not in sys.argv)
+    shutdown()
+
+
+def followers_test() -> None:
+    """TEST 'VUE ABONNES' : envoie dans TON chat prive exactement ce que verront tes abonnes (aucune mention d'apercu) :
+    un signal gagnant + ses resultats, un signal perdant + son stop, un conseil du jour. Exemples historiques."""
+    cfg = load_cfg()
+    cfg["live"] = False
+    if not str(cfg.get("private_link", "")).startswith("http"):
+        cfg["private_link"] = "https://t.me/GotatradingBot"        # juste pour montrer le bouton (sera ton canal prive)
+    pub = Publisher(cfg, log=log)
+    pub.live, pub.target = False, pub.owner_chat                   # envoi UNIQUEMENT dans ton chat prive
+    pub._tag = lambda: ""                                          # rendu natif : identique a ce que voit un abonne
+    send = "--no-send" not in sys.argv
+    if not connect(log=log):
+        log("Source de donnees indisponible")
+        return
+    ex = _closed_examples(cfg)
+    wins = [e for e in ex if e[4].outcome in ("TP2", "TP3")] or [e for e in ex if e[4].outcome == "TP1"]
+    loss = [e for e in ex if e[4].outcome == "SL"]
+    if not wins or not loss:
+        log(f"Exemples insuffisants (gagnants={len(wins)}, perdants={len(loss)})")
+        shutdown()
+        return
+    if send:
+        pub.send_text("🧪 <b>Test « vue abonnés »</b>\nVoici exactement ce que verront tes abonnés : un signal gagnant, "
+                      "un signal perdant, un conseil du jour. Exemples historiques, visibles uniquement par toi.")
+    for label, e in (("GAGNANT", max(wins, key=lambda t: t[0])), ("PERDANT", max(loss, key=lambda t: t[0]))):
+        log(f"[TEST] exemple {label} : {e[1].id} -> {e[4].outcome} {e[4].r:+.2f}R")
+        _post_example(pub, cfg, e[1], e[2], e[3], e[5], send=send, max_updates=2 if label == "GAGNANT" else 1)
+    if send:
+        pub.post_education(utc_now().timetuple().tm_yday)
     shutdown()
 
 
@@ -512,10 +560,9 @@ def _demo_result_image(df, sig, ev, sim, digits, cfg):
     k = df.index.get_loc(pd.Timestamp(sig.bar_open))
     tev = pd.Timestamp(ev["time"])
     j = df.index.get_loc(tev) if tev in df.index else len(df) - 1
-    label, color = _LABELS.get(ev["type"], (ev["type"], GOLD))
     p = OUT_DIR / f"demo_{sig.id}_{ev['type']}.png"
     render_signal_chart(df.iloc[: j + 1], sig, str(p), digits=digits, n_after=min(j - k, 40), brand=cfg["brand"],
-                        result={"label": label, "r": sim.r, "color": color, "hit": list(sim.hit), "stopped": ev["type"] == "SL"})
+                        result=_result_payload(ev["type"], sim))
     return str(p)
 
 
@@ -557,6 +604,8 @@ def main() -> None:
     if "--check-channel" in a:
         print(Publisher(load_cfg()).check_channel()["detail"])
         return
+    if "--test" in a:
+        return followers_test()
     if "--demo" in a:
         return demo()
     if any(x in a for x in ("--recap", "--promo", "--edu", "--pinned")):

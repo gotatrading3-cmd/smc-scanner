@@ -269,8 +269,9 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
         rc = result.get("color", GOLD)
         card.rrect(ov, CX + 100, CY + 24, 400, 92, r=12, fc="#070b10", ec=rc, lw=2.2, alpha=0.96, z=21)
         card.text(ov, CX + 128, CY + 55, result["label"], size=25, color=rc, weight="bold", z=22)
-        if "r" in result:
-            card.text(ov, CX + 128, CY + 94, f"Résultat :  {result['r']:+.2f} R", size=15, color=WHITE, z=22)
+        sub = result.get("sub") or (f"Résultat :  {result['r']:+.2f} R" if "r" in result else None)
+        if sub:
+            card.text(ov, CX + 128, CY + 94, sub, size=15, color=WHITE, z=22)
 
     # ---------------------------------------------------------------- tableau des niveaux
     TY, TH = 690, 104

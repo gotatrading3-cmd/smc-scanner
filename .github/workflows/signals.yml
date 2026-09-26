@@ -10,10 +10,10 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: "scan = cycle normal | demo = exemple en apercu | recap = apercu du bilan | edu = apercu conseil | pinned = texte a epingler"
+        description: "scan = cycle normal | demo = exemple en apercu | recap = apercu du bilan | edu = apercu conseil | pinned = texte a epingler | test = test 'vue abonnes'"
         type: choice
         default: scan
-        options: [scan, demo, recap, edu, pinned]
+        options: [scan, demo, recap, edu, pinned, test]
 
 concurrency:
   group: gota-signals
@@ -67,6 +67,7 @@ jobs:
             recap) python signal_runner.py --recap ;;
             edu)   python signal_runner.py --edu ;;
             pinned) python signal_runner.py --pinned ;;
+            test)  python signal_runner.py --test ;;
             *)     python signal_runner.py --once ;;
           esac
 
