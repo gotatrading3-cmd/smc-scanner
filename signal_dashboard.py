@@ -33,6 +33,7 @@ RAW = f"https://raw.githubusercontent.com/{REPO}/data"
 API = f"https://api.github.com/repos/{REPO}"
 AUTH_FILE = DIR / "dashboard_auth.json"
 KEY_FILE = DIR / "state_key.txt"
+CHANNEL_FILE = DIR / "channel.json"
 
 BG, PANEL, PANEL2, BORDER = "#06080c", "#0b1017", "#0d1420", "#1c2531"
 TXT, MUTED, DIM = "#e8ebf0", "#8a93a1", "#4b5462"
@@ -169,6 +170,34 @@ def market_open(now: datetime) -> bool:
 def label_outcome(o: str) -> str:
     return {"SL": "Stop touché", "TP1": "TP1 puis stop entrée", "TP2": "TP2 atteint", "TP3": "TP3 atteint",
             "EXPIRED": "Clôturé au temps"}.get(o, o)
+
+
+def load_links() -> dict:
+    """Liens locaux (channel.json) : jamais envoyes nulle part, juste des raccourcis pour toi sur cette page LOCALE."""
+    try:
+        return json.loads(CHANNEL_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def weekly_recap(live_hist: list, now: datetime) -> list:
+    """Resultat par semaine ISO (4 dernieres semaines qui ont un trade), le plus recent en premier. Donnees reelles uniquement."""
+    weeks: dict = {}
+    for h in live_hist:
+        try:
+            t = datetime.fromisoformat(str(h["close_time"]).replace("Z", "+00:00"))
+        except Exception:
+            continue
+        iso = t.isocalendar()
+        key = (iso[0], iso[1])
+        w = weeks.setdefault(key, {"n": 0, "r": 0.0, "tp1": 0})
+        w["n"] += 1
+        w["r"] += float(h["r"])
+        if h["outcome"] in ("TP1", "TP2", "TP3"):
+            w["tp1"] += 1
+    out = [{"label": f"Semaine {k[1]:02d} · {k[0]}", "n": v["n"], "r": v["r"], "tp1_pct": v["tp1"] / v["n"] * 100}
+           for k, v in sorted(weeks.items(), reverse=True)]
+    return out[:4]
 
 
 def age_str(iso: str, now: datetime) -> str:
@@ -322,6 +351,30 @@ def render_content(data: dict) -> str:
         cls = {"success": GREEN, "failure": RED}.get(r.get("conclusion"), GOLD if r.get("status") == "in_progress" else MUTED)
         runs_html += f'<div class="run-line"><span class="run-dot" style="background:{cls}"></span>{r["created_at"][:16].replace("T"," ")} UTC — {r.get("conclusion") or r.get("status")}</div>'
 
+    links = load_links()
+
+    def _link(url: Optional[str], icon: str, title: str, desc: str) -> str:
+        if url:
+            return f'<a class="link-card" href="{html.escape(str(url), quote=True)}" target="_blank"><span class="ic">{icon}</span><span><span class="t">{html.escape(title)}</span><span class="d" style="display:block">{html.escape(desc)}</span></span></a>'
+        return f'<div class="link-card disabled"><span class="ic">{icon}</span><span><span class="t">{html.escape(title)}</span><span class="d" style="display:block">non configuré</span></span></div>'
+
+    links_html = (
+        _link(links.get("private_link"), "🔐", "Groupe VIP", "Ouvrir dans Telegram")
+        + _link(links.get("contact_link"), "✉️", "Contact public", "@" + str(links.get("contact_link", "")).rsplit("/", 1)[-1] if links.get("contact_link") else "")
+        + _link(links.get("account_link"), "💼", "Ouvrir un compte", "Lien partenaire")
+    )
+
+    weeks = weekly_recap(live_hist, now)
+    if weeks:
+        mx = max(abs(w["r"]) for w in weeks) or 1.0
+        week_rows = "".join(
+            f'''<div class="week-row"><span>{html.escape(w["label"])}</span>
+              <div class="week-track"><div class="week-fill" data-w="{abs(w['r']) / mx * 46:.1f}" style="background:{GREEN if w['r'] >= 0 else RED};{'left:50%' if w['r'] >= 0 else 'right:50%'}"></div></div>
+              <span style="text-align:right;font-weight:700;color:{GREEN if w['r'] >= 0 else RED}">{w['r']:+.1f} R</span></div>'''
+            for w in weeks)
+    else:
+        week_rows = '<div class="empty">Pas encore assez de trades clôturés pour un bilan par semaine.</div>'
+
     return f'''
   <div class="hero">
     <div class="eyebrow">— Confluence engine · marchés FX &amp; crypto</div>
@@ -395,6 +448,44 @@ def render_content(data: dict) -> str:
     <h2>Santé de la chaîne cloud (GOTA Continu)</h2>
     <div class="sub" style="margin-bottom:8px;">{html.escape(data["chain_detail"])}</div>
     <div class="runs">{runs_html or '<div class="empty">Historique des exécutions indisponible.</div>'}</div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Bilan par semaine</h2>
+    {week_rows}
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Accès rapides</h2>
+    <div class="links-row">{links_html}</div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Comment le robot décide</h2>
+    <div class="method">
+      <svg viewBox="-48 -8 416 336" style="width:100%;max-width:300px;margin:0 auto;display:block">
+        <polygon points="160,26 274,93 274,227 160,294 46,227 46,93" fill="none" stroke="{BORDER}" stroke-width="1.4"/>
+        <polygon points="160,70 236,113 236,207 160,250 84,207 84,113" fill="{GOLD}0d" stroke="{GOLD}59" stroke-width="1"/>
+        <g font-family="IBM Plex Mono, monospace" font-size="10.5" fill="{MUTED}" text-anchor="middle">
+          <circle cx="160" cy="26" r="4.5" fill="{GOLD}"/><text x="160" y="12">LIQUIDITÉ</text>
+          <circle cx="274" cy="93" r="4.5" fill="{GOLD}"/><text x="288" y="88" text-anchor="start">OB+FVG</text>
+          <circle cx="274" cy="227" r="4.5" fill="{BLUE}"/><text x="288" y="232" text-anchor="start">VOLUME</text>
+          <circle cx="160" cy="294" r="4.5" fill="{BLUE}"/><text x="160" y="311">RSI</text>
+          <circle cx="46" cy="227" r="4.5" fill="{GOLD}"/><text x="32" y="232" text-anchor="end">DISCOUNT</text>
+          <circle cx="46" cy="93" r="4.5" fill="{GOLD}"/><text x="32" y="88" text-anchor="end">SESSION</text>
+        </g>
+        <text x="160" y="164" text-anchor="middle" font-family="Sora" font-size="15" fill="{TXT}" font-weight="700">SCORE</text>
+        <text x="160" y="182" text-anchor="middle" font-family="IBM Plex Mono" font-size="12" fill="{GOLD}">4 / 6 minimum</text>
+      </svg>
+      <div class="method-checks">
+        <div class="mrow"><span class="n">01</span>Balayage de liquidité</div>
+        <div class="mrow"><span class="n">02</span>Zone empilée OB + FVG</div>
+        <div class="mrow"><span class="n">03</span>Volume Profile (POC)</div>
+        <div class="mrow"><span class="n">04</span>RSI en retournement</div>
+        <div class="mrow"><span class="n">05</span>Zone Discount / Premium</div>
+        <div class="mrow"><span class="n">06</span>Session Londres / New York</div>
+      </div>
+    </div>
   </div>
 
   <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page</div>
@@ -519,6 +610,27 @@ def render_shell() -> str:
   .runs {{ margin-top:10px; }}
   .run-line {{ font-size:11.5px; color:{MUTED}; display:flex; align-items:center; gap:8px; padding:3px 0; }}
   .run-dot {{ width:7px; height:7px; border-radius:50%; flex:none; }}
+  /* ---------- liens rapides ---------- */
+  .links-row {{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }}
+  .link-card {{
+    display:flex; align-items:center; gap:12px; background:{PANEL2}; border:1px solid {BORDER}; border-radius:12px;
+    padding:14px 16px; text-decoration:none; color:{TXT}; transition:border-color .2s,transform .2s;
+  }}
+  .link-card:hover {{ border-color:{GOLD}66; transform:translateY(-2px); }}
+  .link-card .ic {{ width:36px; height:36px; border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:17px; flex:none; background:{PANEL}; border:1px solid {BORDER}; }}
+  .link-card .t {{ font-weight:600; font-size:13px; }}
+  .link-card .d {{ color:{MUTED}; font-size:11px; margin-top:1px; }}
+  .link-card.disabled {{ opacity:.45; pointer-events:none; }}
+  /* ---------- methode (hexagone des confirmations) ---------- */
+  .method {{ display:grid; grid-template-columns:1fr 1.2fr; gap:26px; align-items:center; }}
+  .method-checks {{ display:flex; flex-direction:column; }}
+  .mrow {{ display:flex; align-items:center; gap:12px; padding:9px 2px; border-bottom:1px solid {BORDER}; font-size:12.5px; }}
+  .mrow:last-child {{ border-bottom:none; }}
+  .mrow .n {{ font-family:"IBM Plex Mono",monospace; color:{GOLD}; font-size:11px; width:16px; flex:none; }}
+  /* ---------- bilan hebdo ---------- */
+  .week-row {{ display:grid; grid-template-columns:1fr 2fr 70px; align-items:center; gap:12px; font-size:12.5px; padding:8px 0; }}
+  .week-track {{ position:relative; height:7px; background:{PANEL2}; border-radius:4px; overflow:hidden; }}
+  .week-fill {{ position:absolute; top:0; bottom:0; left:50%; border-radius:4px; width:0; transition:width 1s cubic-bezier(.16,.84,.44,1); }}
   .foot {{ color:{DIM}; font-size:11.5px; margin-top:24px; text-align:center; }}
   @media (max-width: 900px) {{ .grid {{ grid-template-columns: repeat(2,1fr); }} .panels {{ grid-template-columns: 1fr; }} }}
 </style></head>
@@ -591,10 +703,10 @@ def render_shell() -> str:
   }}
 
   function animateBars() {{
-    var bars = document.querySelectorAll('.bar-fill[data-w]');
+    var bars = document.querySelectorAll('.bar-fill[data-w], .week-fill[data-w]');
     bars.forEach(function(el, i) {{
       var w = el.getAttribute('data-w');
-      setTimeout(function(){{ el.style.width = (reduceMotion ? w : w) + '%'; }}, reduceMotion ? 0 : i * 90);
+      setTimeout(function(){{ el.style.width = w + '%'; }}, reduceMotion ? 0 : i * 90);
     }});
   }}
 
