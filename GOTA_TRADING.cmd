@@ -32,5 +32,5 @@ if not errorlevel 1 (
 
 REM --- 3. Fallback : Edge --app (pas de navigateur chrome non plus, mais visiblement Edge) ---
 set "APPDATA_EDGE=%LOCALAPPDATA%\GotaTradingApp"
-start "" msedge --app=http://localhost:8080 --user-data-dir="%APPDATA_EDGE%" --window-size=1340,880 --window-position=120,60
-if errorlevel 1 start http://localhost:8080
+start "" msedge --app=http://localhost:8090 --user-data-dir="%APPDATA_EDGE%" --window-size=1340,880 --window-position=120,60
+if errorlevel 1 start http://localhost:8090

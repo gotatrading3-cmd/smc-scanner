@@ -227,13 +227,16 @@ def render(data: dict) -> str:
     chain_pill = f'<span class="pill {"ok" if data["chain_ok"] else "bad"}"><span class="dot"></span>{"En ligne" if data["chain_ok"] else "À vérifier"}</span>'
     market_pill = f'<span class="pill {"ok" if fx_open else "muted"}">{"Marché FX ouvert" if fx_open else "Marché FX fermé (week-end)"}</span>'
 
+    def _cu(target: int) -> str:
+        return f'<span class="cu" data-target="{target}">0</span>'
+
     kpis = [
-        ("Signaux clôturés", str(n), TXT),
+        ("Signaux clôturés", _cu(n), TXT),
         ("Taux TP1", f"{tp1:.0f}%", GREEN if tp1 >= 50 else GOLD),
         ("Stops", f"{sl:.0f}%", RED if sl else MUTED),
         ("Résultat cumulé", f"{total_r:+.1f} R", GREEN if total_r >= 0 else RED),
-        ("Signaux aujourd'hui", str(st.get("per_day", {}).get(today, 0)), TXT),
-        ("Actifs en ce moment", str(len(active)), GOLD if active else MUTED),
+        ("Signaux aujourd'hui", _cu(st.get("per_day", {}).get(today, 0)), TXT),
+        ("Actifs en ce moment", _cu(len(active)), GOLD if active else MUTED),
     ]
     kpi_html = "".join(f'<div class="kpi"><div class="kpi-label">{html.escape(l)}</div><div class="kpi-val" style="color:{c}">{v}</div></div>' for l, v, c in kpis)
 
@@ -293,14 +296,27 @@ def render(data: dict) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="90">
 <title>GOTA Signaux — Tableau de bord</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {{ color-scheme: dark; }}
   * {{ box-sizing: border-box; }}
-  body {{ margin:0; background:{BG}; color:{TXT}; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }}
+  body {{ margin:0; background:{BG}; color:{TXT}; font-family: "Sora", -apple-system, "Segoe UI", Roboto, sans-serif; }}
+  .mono {{ font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }}
   .wrap {{ max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }}
   .top {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:22px; }}
-  .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; }}
-  .top .sub {{ color:{MUTED}; font-size:12.5px; }}
+  .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; font-weight:700; }}
+  .top .sub {{ color:{MUTED}; font-size:12.5px; font-family:"IBM Plex Mono",monospace; }}
+  .sessions-row {{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px; }}
+  .session-card {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:11px; padding:12px 13px; transition:border-color .3s,background .3s; }}
+  .session-card.active {{ border-color:{GREEN}66; background:linear-gradient(180deg,{GREEN}14,{PANEL} 65%); }}
+  .session-top {{ display:flex; align-items:center; justify-content:space-between; font-weight:600; font-size:12.5px; }}
+  .session-dot {{ width:6px; height:6px; border-radius:50%; background:{DIM}; }}
+  .session-card.active .session-dot {{ background:{GREEN}; box-shadow:0 0 6px {GREEN}; animation:blink 2.2s ease-in-out infinite; }}
+  .session-hours {{ font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:{MUTED}; display:block; margin-top:5px; }}
+  .session-state {{ font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:{DIM}; }}
+  .session-card.active .session-state {{ color:{GREEN}; }}
+  @keyframes blink {{ 0%,100% {{ opacity:1; }} 50% {{ opacity:.35; }} }}
   .pill {{ display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:20px; font-size:12.5px; font-weight:600; border:1px solid {BORDER}; }}
   .pill.ok {{ color:{GREEN}; border-color:{GREEN}33; background:#0e1a14; }}
   .pill.bad {{ color:{RED}; border-color:{RED}33; background:#1a0e0e; }}
@@ -309,7 +325,7 @@ def render(data: dict) -> str:
   .grid {{ display:grid; grid-template-columns: repeat(6, 1fr); gap:12px; margin-bottom:22px; }}
   .kpi {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:12px; padding:14px 16px; }}
   .kpi-label {{ font-size:10.5px; color:{MUTED}; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }}
-  .kpi-val {{ font-size:22px; font-weight:700; }}
+  .kpi-val {{ font-size:22px; font-weight:700; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; }}
   .panels {{ display:grid; grid-template-columns: 1.3fr 1fr; gap:16px; margin-bottom:16px; }}
   .panel {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:14px; padding:18px 20px; }}
   .panel h2 {{ font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:{MUTED}; margin:0 0 14px; }}
@@ -349,6 +365,8 @@ def render(data: dict) -> str:
     {chain_pill}{market_pill}
   </div>
 
+  <div class="sessions-row" id="sessions"></div>
+
   <div class="grid">{kpi_html}</div>
 
   <div class="panels">
@@ -380,9 +398,48 @@ def render(data: dict) -> str:
     <div class="runs">{runs_html or '<div class="empty">Historique des exécutions indisponible.</div>'}</div>
   </div>
 
-  <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page</div>
+  <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page
+    &nbsp;·&nbsp;<a href="http://localhost:8080" style="color:{MUTED}">comptes MT5 locaux →</a></div>
 
-</div></body></html>'''
+</div>
+<script>
+  var SESSIONS = [{{n:"Sydney",o:22,c:7}},{{n:"Tokyo",o:0,c:9}},{{n:"Londres",o:8,c:17}},{{n:"New York",o:13,c:22}}];
+  function inSess(h,s) {{ return s.o<s.c ? (h>=s.o&&h<s.c) : (h>=s.o||h<s.c); }}
+  function drawSessions() {{
+    var h = new Date().getUTCHours(), box = document.getElementById("sessions");
+    if (!box) return;
+    box.innerHTML = SESSIONS.map(function(s){{
+      var a = inSess(h,s);
+      return '<div class="session-card'+(a?' active':'')+'"><div class="session-top"><span>'+s.n+'</span><span class="session-dot"></span></div>'+
+             '<span class="session-hours">'+String(s.o).padStart(2,'0')+'h–'+String(s.c).padStart(2,'0')+'h UTC</span>'+
+             '<span class="session-state">'+(a?'Ouverte':'Fermée')+'</span></div>';
+    }}).join('');
+  }}
+  drawSessions();
+  setInterval(drawSessions, 30000);
+
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function countUp(el) {{
+    var target = parseInt(el.getAttribute('data-target'),10)||0;
+    if (reduceMotion) {{ el.textContent = target; return; }}
+    var t0 = performance.now(), dur = 800;
+    function step(t) {{
+      var p = Math.min(1,(t-t0)/dur);
+      el.textContent = Math.round(target*(1-Math.pow(1-p,3)));
+      if (p<1) requestAnimationFrame(step); else el.textContent = target;
+    }}
+    requestAnimationFrame(step);
+  }}
+  document.querySelectorAll('.cu').forEach(countUp);
+
+  if (!reduceMotion && 'IntersectionObserver' in window) {{
+    var targets = document.querySelectorAll('.kpi, .panel, .session-card, .sig-card');
+    targets.forEach(function(el){{ el.style.opacity=0; el.style.transform='translateY(10px)'; el.style.transition='opacity .45s ease,transform .45s ease'; }});
+    var io = new IntersectionObserver(function(es){{ es.forEach(function(e){{ if(e.isIntersecting){{ e.target.style.opacity=1; e.target.style.transform='none'; io.unobserve(e.target); }} }}); }}, {{threshold:.1}});
+    targets.forEach(function(el){{ io.observe(el); }});
+  }}
+</script>
+</body></html>'''
 
 
 # ------------------------------------------------------------------ serveur
