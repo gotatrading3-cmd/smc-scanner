@@ -73,7 +73,8 @@
   "edu": "2026-09-27",
   "sat": "2026-09-26",
   "crypto": "2026-09-27",
-  "ranking": "2026-09-26"
+  "ranking": "2026-09-26",
+  "sun": "2026-09-27"
  },
  "previewed": [
   "daily",
@@ -82,7 +83,8 @@
   "sat",
   "crypto",
   "ranking",
-  "edu"
+  "edu",
+  "sun"
  ],
  "data_fail_runs": 0,
  "outage_alerted": false,
@@ -178,16 +180,16 @@
  },
  "pub_posts": {
   "2026-09-26": 5,
-  "2026-09-27": 2
+  "2026-09-27": 3
  },
  "pub_sig": {},
  "snap": {
-  "asof": "2026-09-26T16:03:39.947518",
+  "asof": "2026-09-27T17:33:31.117110",
   "data": {
    "ranked": [
     [
      "USD",
-     1.1408231888862514
+     1.1124497950426437
     ],
     [
      "CHF",
@@ -195,11 +197,11 @@
     ],
     [
      "EUR",
-     0.029980131788606305
+     0.06525408429890467
     ],
     [
      "GBP",
-     -0.11347589107350009
+     -0.12037644974019093
     ],
     [
      "CAD",
@@ -225,7 +227,7 @@
   }
  },
  "n_symbols": 30,
- "cta_seq": 3,
+ "cta_seq": 4,
  "tg_update_offset": 719080698,
  "private_enc": "gAAAAABqt_QDHwZehUpmAxpOt_Z243OTG6H6dK6CH8St8bmwtqVLEGts2GjyEPvLhRrvhDtTiIaSCmZX_RqU1mNjZLsnIfZzp5X1tsJEo0vROuz8TmA9SKgxNUDbTmXoPitT-7ZAYy1A"
 }
