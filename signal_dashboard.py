@@ -397,8 +397,7 @@ def render_content(data: dict) -> str:
     <div class="runs">{runs_html or '<div class="empty">Historique des exécutions indisponible.</div>'}</div>
   </div>
 
-  <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page
-    &nbsp;·&nbsp;<a href="http://localhost:8080" style="color:{MUTED}">comptes MT5 locaux →</a></div>
+  <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page</div>
 '''
 
 
