@@ -230,6 +230,31 @@ class Publisher:
         if self.token and self.owner_chat:
             self._api("sendMessage", {"chat_id": self.owner_chat, "text": text, "parse_mode": "HTML"})
 
+    def poll_owner_commands(self, st: dict, reply) -> None:
+        """Repond aux messages envoyes par le PROPRIETAIRE en prive (ex. /etat) : verifie a chaque cycle (le cloud tourne
+        toutes les 5 min, donc une reponse arrive en quelques minutes, meme PC eteint). N'agit que sur des messages
+        venant du chat prive du proprietaire ; jamais bloquant (delai court, aucune exception ne remonte)."""
+        if not self.token or not self.owner_chat:
+            return
+        try:
+            r = requests.get(f"https://api.telegram.org/bot{self.token}/getUpdates",
+                             params={"offset": st.get("tg_update_offset", 0), "timeout": 0}, timeout=10)
+            j = r.json()
+        except Exception:
+            return
+        if not j.get("ok"):
+            return
+        for upd in j.get("result", []):
+            st["tg_update_offset"] = upd["update_id"] + 1
+            msg = upd.get("message") or {}
+            chat_id = str((msg.get("chat") or {}).get("id", ""))
+            text = (msg.get("text") or "").strip().lstrip("/").lower()
+            if chat_id == str(self.owner_chat) and text in ("etat", "état", "status", "health"):
+                try:
+                    self.notify_owner(reply())
+                except Exception as e:
+                    self.log(f"[PUB] reponse /etat impossible : {e}")
+
     def _quiet(self, notify: bool) -> bool:
         """Envoi silencieux (sans sonnerie) : apercus, tests de nuit (SIGNALS_SILENT) et posts courants du groupe public."""
         return (not notify) or (not self.live) or self.silent

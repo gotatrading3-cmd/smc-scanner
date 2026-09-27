@@ -437,6 +437,37 @@ def _stats_line(recs: List[dict]) -> str:
     return f"{s['n']} {'signaux' if s['n'] > 1 else 'signal'} · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · <b>{s['total_r']:+.1f}R</b>"
 
 
+def fx_open(now: pd.Timestamp) -> bool:
+    """Forex : ferme du vendredi ~22h UTC au dimanche ~22h UTC (approximatif, hors jours feries)."""
+    wd, h = now.weekday(), now.hour
+    if wd == 5:
+        return False
+    if wd == 4 and h >= 22:
+        return False
+    if wd == 6 and h < 22:
+        return False
+    return True
+
+
+def status_text(st: dict, now: pd.Timestamp) -> str:
+    """Reponse a /etat, /status : point instantane envoye au proprietaire (chat prive uniquement). Ce message n'est
+    JAMAIS public : peut donc detailler les signaux actifs sans risque pour le VIP."""
+    today = str(now.date())
+    n_active = len(st.get("active", {}))
+    lines = [f"🟢 <b>Robot en ligne</b> — ce message vient d'un cycle qui vient de tourner ({now.strftime('%d/%m %H:%M UTC')}).",
+             "", f"Marché forex : {'🟢 ouvert' if fx_open(now) else '🔴 fermé (week-end)'}",
+             f"Signaux envoyés aujourd'hui : {st.get('per_day', {}).get(today, 0)}",
+             f"Signaux actifs : {n_active}"]
+    for rec in list(st.get("active", {}).values())[:10]:
+        sg = rec.get("signal", {})
+        if sg:
+            lines.append(f"  • {sg.get('display', '?')} — {'achat' if sg.get('direction') == 'LONG' else 'vente'}")
+    hist = load_history()
+    lines += ["", "Depuis le lancement : " + _stats_line(hist) if hist else "", "",
+              "Écris /etat à tout moment pour un nouveau point."]
+    return "\n".join(l for l in lines if l != "")
+
+
 def build_recap_image(st: dict, hist: List[dict], now: pd.Timestamp, week_only: bool, cfg: dict) -> Optional[str]:
     recs = hist
     title, sub = "BILAN DEPUIS LE LANCEMENT", f"Suivi depuis le {str(st['started'])[:10]} · pertes incluses"
@@ -653,6 +684,10 @@ def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
     now = utc_now()
     _stats["ok"] = _stats["fail"] = 0
     st["n_symbols"] = len(ids)
+    try:
+        pubs[0].poll_owner_commands(st, lambda: status_text(st, now))
+    except Exception as e:
+        log(f"[PUB] /etat : erreur {e}")
     try:
         update_active(st, pubs, cfg)
     except Exception as e:                                    # un suivi en erreur ne bloque pas le scan
