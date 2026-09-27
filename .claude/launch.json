@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "signal-dashboard",
+      "runtimeExecutable": "C:\\Users\\GOTA TRADING\\AppData\\Local\\Programs\\Python\\Python312\\python.exe",
+      "runtimeArgs": ["signal_dashboard.py"],
+      "port": 8090
+    }
+  ]
+}

@@ -1,0 +1,448 @@
+"""
+signal_dashboard.py - Tableau de bord LOCAL (lecture seule) du systeme de signaux GOTA.
+
+Montre en un coup d'oeil ce que fait le robot qui tourne dans le cloud (GitHub Actions), meme quand ce PC est eteint :
+etat de la chaine, marche (ouvert/ferme), signaux actifs (VIP, dechiffres localement), historique reel et bilan.
+
+Ne pilote rien : aucune ecriture sur le depot, aucun ordre. Toutes les donnees viennent du depot PUBLIC
+(workflow runs + branche "data") ; les niveaux des signaux EN COURS sont chiffres sur le depot et dechiffres
+uniquement ici, sur ce PC, avec la cle locale state_key.txt (jamais envoyee nulle part).
+
+Lancer :  python signal_dashboard.py   (ou double-clic sur run_signal_dashboard.cmd)
+Ouvrir :  http://localhost:8090
+"""
+from __future__ import annotations
+import base64
+import html
+import json
+import os
+import time
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Optional
+from urllib.parse import urlparse
+
+import requests
+
+DIR = Path(__file__).parent
+PORT = 8090
+REPO = "gotatrading3-cmd/smc-scanner"
+RAW = f"https://raw.githubusercontent.com/{REPO}/data"
+API = f"https://api.github.com/repos/{REPO}"
+AUTH_FILE = DIR / "dashboard_auth.json"
+KEY_FILE = DIR / "state_key.txt"
+
+BG, PANEL, PANEL2, BORDER = "#06080c", "#0b1017", "#0d1420", "#1c2531"
+TXT, MUTED, DIM = "#e8ebf0", "#8a93a1", "#4b5462"
+GOLD, GOLD_L = "#d4af37", "#f1d67c"
+GREEN, RED, BLUE = "#2ecc71", "#ef4444", "#38bdf8"
+
+# ------------------------------------------------------------------ auth (reprend dashboard_auth.json, comme dashboard.py)
+def _load_auth() -> tuple[str, str]:
+    try:
+        d = json.loads(AUTH_FILE.read_text(encoding="utf-8"))
+        return d.get("user", "gota"), d.get("password", "gota")
+    except Exception:
+        return "gota", "gota"
+
+
+def _check_basic_auth(header_value: str) -> bool:
+    user, pwd = _load_auth()
+    if not header_value.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header_value[6:]).decode("utf-8")
+        u, _, p = decoded.partition(":")
+        return u == user and p == pwd
+    except Exception:
+        return False
+
+
+# ------------------------------------------------------------------ donnees (depot public + dechiffrement local)
+def _get(url: str, timeout: float = 6.0):
+    try:
+        r = requests.get(url, timeout=timeout, headers={"Accept": "application/vnd.github+json"})
+        if r.status_code == 200:
+            return r
+    except Exception:
+        pass
+    return None
+
+
+def _fernet():
+    from cryptography.fernet import Fernet
+    key = KEY_FILE.read_text(encoding="utf-8").strip()
+    return Fernet(key.encode())
+
+
+def fetch_snapshot() -> dict:
+    """Tout ce qu'affiche le tableau de bord, recalcule a chaque chargement de page (donnees reelles, jamais inventees)."""
+    out = {
+        "fetched": datetime.now(timezone.utc), "chain_ok": False, "chain_detail": "inconnu",
+        "chain_runs": [], "state": {}, "active": {}, "history": [], "key_ok": False, "error": None,
+    }
+
+    runs = _get(f"{API}/actions/workflows/continu.yml/runs?per_page=5")
+    if runs is not None:
+        wr = runs.json().get("workflow_runs", [])
+        out["chain_runs"] = wr
+        for r in wr:
+            if r.get("status") in ("in_progress", "queued"):
+                out["chain_ok"] = True
+                out["chain_detail"] = f"en cours depuis {r['created_at']}"
+                break
+        if not out["chain_ok"] and wr:
+            last = wr[0]
+            age_min = (out["fetched"] - datetime.fromisoformat(last["created_at"].replace("Z", "+00:00"))).total_seconds() / 60
+            out["chain_ok"] = last.get("conclusion") == "success" and age_min < 20
+            out["chain_detail"] = f"dernier passage il y a {age_min:.0f} min ({last.get('conclusion') or last.get('status')})"
+    else:
+        out["chain_detail"] = "GitHub injoignable depuis ce PC (ne veut pas dire que le robot est arrete)"
+
+    st = _get(f"{RAW}/signals_state.json")
+    if st is not None:
+        raw = st.json()
+        enc = raw.pop("private_enc", None)
+        out["state"] = raw
+        if enc:
+            if KEY_FILE.exists():
+                try:
+                    priv = json.loads(_fernet().decrypt(enc.encode()).decode())
+                    out["active"] = priv.get("active", {})
+                    out["key_ok"] = True
+                except Exception:
+                    out["error"] = "cle locale presente mais le dechiffrement a echoue (cle differente de celle du cloud ?)"
+            else:
+                out["error"] = "cle locale (state_key.txt) introuvable : signaux en cours non lisibles ici"
+
+    hist = _get(f"{RAW}/signals_history.jsonl")
+    if hist is not None:
+        for ln in hist.text.splitlines():
+            try:
+                out["history"].append(json.loads(ln))
+            except Exception:
+                pass
+    return out
+
+
+def market_open(now: datetime) -> bool:
+    """Forex : ferme du vendredi ~22h UTC au dimanche ~22h UTC (approximatif, hors jours feries)."""
+    wd, h = now.weekday(), now.hour
+    if wd == 5:
+        return False
+    if wd == 4 and h >= 22:
+        return False
+    if wd == 6 and h < 22:
+        return False
+    return True
+
+
+def label_outcome(o: str) -> str:
+    return {"SL": "Stop touché", "TP1": "TP1 puis stop entrée", "TP2": "TP2 atteint", "TP3": "TP3 atteint",
+            "EXPIRED": "Clôturé au temps"}.get(o, o)
+
+
+def age_str(iso: str, now: datetime) -> str:
+    try:
+        t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        mins = int((now - t).total_seconds() / 60)
+    except Exception:
+        return "?"
+    if mins < 60:
+        return f"{mins} min"
+    if mins < 1440:
+        return f"{mins // 60} h {mins % 60:02d}"
+    return f"{mins // 1440} j"
+
+
+# ------------------------------------------------------------------ petits graphiques (SVG, palette GOTA)
+def equity_curve(history: list) -> str:
+    """Courbe du R cumule (une seule serie, or) ; un point = un trade clos, dans l'ordre. Infobulle native au survol."""
+    live = sorted([h for h in history if h.get("mode") == "live"], key=lambda h: h["close_time"])
+    if len(live) < 1:
+        return '<div class="empty">Aucun trade clôturé pour l\'instant — la courbe apparaîtra dès le premier trade fermé.</div>'
+    W, H, PAD = 720, 200, 28
+    cum, pts = 0.0, [0.0]
+    for h in live:
+        cum += float(h["r"])
+        pts.append(cum)
+    lo, hi = min(pts), max(pts)
+    span = max(hi - lo, 1.0)
+    n = len(pts)
+    xs = [PAD + i * (W - 2 * PAD) / max(n - 1, 1) for i in range(n)]
+    ys = [H - PAD - (v - lo) / span * (H - 2 * PAD) for v in pts]
+    y0 = H - PAD - (0 - lo) / span * (H - 2 * PAD)
+    path = " ".join(f"{'M' if i == 0 else 'L'}{x:.1f},{y:.1f}" for i, (x, y) in enumerate(zip(xs, ys)))
+    dots = "".join(
+        f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{GOLD if pts[i] >= 0 else RED}" stroke="{BG}" stroke-width="1.5">'
+        f'<title>{"Départ" if i == 0 else f"{live[i-1]["display"]} · {label_outcome(live[i-1]["outcome"])} · {live[i-1]["r"]:+.2f}R"}'
+        f" — cumul {pts[i]:+.2f}R</title></circle>"
+        for i, (x, y) in enumerate(zip(xs, ys)))
+    final_cls = GREEN if cum >= 0 else RED
+    return f'''<svg viewBox="0 0 {W} {H}" class="chart" role="img" aria-label="Résultat cumulé en R">
+      <line x1="{PAD}" y1="{y0:.1f}" x2="{W - PAD}" y2="{y0:.1f}" stroke="{BORDER}" stroke-width="1" stroke-dasharray="3,4"/>
+      <path d="{path}" fill="none" stroke="{GOLD}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+      {dots}
+      <text x="{PAD}" y="16" fill="{MUTED}" font-size="11" font-family="inherit">Résultat cumulé (R) · {n - 1} trade{'s' if n - 1 > 1 else ''}</text>
+      <text x="{W - PAD}" y="16" fill="{final_cls}" font-size="13" font-weight="700" text-anchor="end" font-family="inherit">{cum:+.2f} R</text>
+    </svg>'''
+
+
+def strength_bars(snap: dict) -> str:
+    """Force des devises sur 5 jours : barres divergentes autour de zero, valeur toujours affichee (jamais la couleur seule)."""
+    ranked = (snap or {}).get("ranked") or []
+    if len(ranked) < 2:
+        return '<div class="empty">Instantané du marché pas encore disponible.</div>'
+    mx = max(abs(p) for _, p in ranked) or 1.0
+    rows = []
+    for cur, p in ranked:
+        w = abs(p) / mx * 46
+        side = "right" if p >= 0 else "left"
+        color = GREEN if p >= 0 else RED
+        rows.append(f'''<div class="bar-row">
+          <span class="bar-cur">{html.escape(cur)}</span>
+          <div class="bar-track">
+            <div class="bar-fill {side}" style="width:{w:.1f}%;background:{color}"></div>
+          </div>
+          <span class="bar-val" style="color:{color}">{p:+.2f}%</span>
+        </div>''')
+    return f'<div class="bars">{"".join(rows)}</div>'
+
+
+# ------------------------------------------------------------------ page
+def render(data: dict) -> str:
+    now = data["fetched"]
+    st, active, hist = data["state"], data["active"], data["history"]
+    live_hist = [h for h in hist if h.get("mode") == "live"]
+    n = len(live_hist)
+    tp1 = sum(1 for h in live_hist if h["outcome"] in ("TP1", "TP2", "TP3")) / n * 100 if n else 0.0
+    sl = sum(1 for h in live_hist if h["outcome"] == "SL") / n * 100 if n else 0.0
+    total_r = sum(float(h["r"]) for h in live_hist)
+    today = str(now.date())
+    fx_open = market_open(now)
+
+    chain_pill = f'<span class="pill {"ok" if data["chain_ok"] else "bad"}"><span class="dot"></span>{"En ligne" if data["chain_ok"] else "À vérifier"}</span>'
+    market_pill = f'<span class="pill {"ok" if fx_open else "muted"}">{"Marché FX ouvert" if fx_open else "Marché FX fermé (week-end)"}</span>'
+
+    kpis = [
+        ("Signaux clôturés", str(n), TXT),
+        ("Taux TP1", f"{tp1:.0f}%", GREEN if tp1 >= 50 else GOLD),
+        ("Stops", f"{sl:.0f}%", RED if sl else MUTED),
+        ("Résultat cumulé", f"{total_r:+.1f} R", GREEN if total_r >= 0 else RED),
+        ("Signaux aujourd'hui", str(st.get("per_day", {}).get(today, 0)), TXT),
+        ("Actifs en ce moment", str(len(active)), GOLD if active else MUTED),
+    ]
+    kpi_html = "".join(f'<div class="kpi"><div class="kpi-label">{html.escape(l)}</div><div class="kpi-val" style="color:{c}">{v}</div></div>' for l, v, c in kpis)
+
+    active_html = ""
+    for sid, rec in active.items():
+        sg = rec.get("signal", {})
+        if not sg:
+            continue
+        long_ = sg.get("direction") == "LONG"
+        dcol = GREEN if long_ else RED
+        tps = sg.get("tps", [None, None, None])
+        active_html += f'''<div class="sig-card">
+          <div class="sig-head">
+            <span class="sig-pair">{html.escape(sg.get("display", "?"))}</span>
+            <span class="sig-dir" style="color:{dcol};border-color:{dcol}">{"ACHAT" if long_ else "VENTE"}</span>
+            <span class="sig-age">depuis {age_str(rec.get("published", ""), now)}</span>
+            {'<span class="sig-tag">public</span>' if rec.get("public_msg_id") else ""}
+          </div>
+          <div class="sig-levels">
+            <div><span class="lbl">Entrée</span><b>{sg.get("entry", "?")}</b></div>
+            <div><span class="lbl" style="color:{RED}">Stop</span><b style="color:{RED}">{sg.get("sl", "?")}</b></div>
+            <div><span class="lbl" style="color:{GREEN}">TP1</span><b style="color:{GREEN}">{tps[0]}</b></div>
+            <div><span class="lbl" style="color:{GREEN}">TP2</span><b style="color:{GREEN}">{tps[1]}</b></div>
+            <div><span class="lbl" style="color:{GREEN}">TP3</span><b style="color:{GREEN}">{tps[2]}</b></div>
+          </div>
+        </div>'''
+    if not active_html:
+        if not data["key_ok"] and active == {} and data.get("error"):
+            active_html = f'<div class="empty">⚠ {html.escape(data["error"])}</div>'
+        else:
+            active_html = '<div class="empty">Aucun signal actif en ce moment.</div>'
+
+    trade_rows = ""
+    for h in sorted(hist, key=lambda x: x["close_time"], reverse=True)[:12]:
+        pos = float(h["r"]) >= 0
+        badge = GREEN if pos else RED
+        mode_tag = "" if h.get("mode") == "live" else '<span class="chip">aperçu</span>'
+        trade_rows += f'''<tr>
+          <td>{html.escape(str(h["close_time"])[:16]).replace("T", " ")}</td>
+          <td><b>{html.escape(h["display"])}</b></td>
+          <td>{"Achat" if h["direction"] == "LONG" else "Vente"}</td>
+          <td>{label_outcome(h["outcome"])} {mode_tag}</td>
+          <td style="color:{badge};font-weight:700">{float(h["r"]):+.2f} R</td>
+        </tr>'''
+    if not trade_rows:
+        trade_rows = '<tr><td colspan="5" class="empty">Aucun trade clôturé pour l\'instant.</td></tr>'
+
+    watch = [v["display"] for v in (st.get("watch") or {}).values() if v]
+    watch_html = ", ".join(html.escape(w) for w in watch[:10]) if watch else "aucune paire particulière en ce moment"
+
+    runs_html = ""
+    for r in data["chain_runs"][:5]:
+        cls = {"success": GREEN, "failure": RED}.get(r.get("conclusion"), GOLD if r.get("status") == "in_progress" else MUTED)
+        runs_html += f'<div class="run-line"><span class="run-dot" style="background:{cls}"></span>{r["created_at"][:16].replace("T"," ")} UTC — {r.get("conclusion") or r.get("status")}</div>'
+
+    return f'''<!doctype html><html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="90">
+<title>GOTA Signaux — Tableau de bord</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  * {{ box-sizing: border-box; }}
+  body {{ margin:0; background:{BG}; color:{TXT}; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }}
+  .wrap {{ max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }}
+  .top {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:22px; }}
+  .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; }}
+  .top .sub {{ color:{MUTED}; font-size:12.5px; }}
+  .pill {{ display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:20px; font-size:12.5px; font-weight:600; border:1px solid {BORDER}; }}
+  .pill.ok {{ color:{GREEN}; border-color:{GREEN}33; background:#0e1a14; }}
+  .pill.bad {{ color:{RED}; border-color:{RED}33; background:#1a0e0e; }}
+  .pill.muted {{ color:{MUTED}; }}
+  .pill .dot {{ width:7px; height:7px; border-radius:50%; background:currentColor; }}
+  .grid {{ display:grid; grid-template-columns: repeat(6, 1fr); gap:12px; margin-bottom:22px; }}
+  .kpi {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:12px; padding:14px 16px; }}
+  .kpi-label {{ font-size:10.5px; color:{MUTED}; text-transform:uppercase; letter-spacing:.06em; margin-bottom:6px; }}
+  .kpi-val {{ font-size:22px; font-weight:700; }}
+  .panels {{ display:grid; grid-template-columns: 1.3fr 1fr; gap:16px; margin-bottom:16px; }}
+  .panel {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:14px; padding:18px 20px; }}
+  .panel h2 {{ font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:{MUTED}; margin:0 0 14px; }}
+  .chart {{ width:100%; height:auto; font-family: -apple-system, sans-serif; }}
+  .bars {{ display:flex; flex-direction:column; gap:8px; }}
+  .bar-row {{ display:grid; grid-template-columns: 42px 1fr 60px; align-items:center; gap:8px; font-size:12.5px; }}
+  .bar-cur {{ font-weight:700; color:{TXT}; }}
+  .bar-track {{ position:relative; height:8px; background:{PANEL2}; border-radius:4px; overflow:hidden; }}
+  .bar-fill {{ position:absolute; top:0; bottom:0; border-radius:4px; }}
+  .bar-fill.right {{ left:50%; }}
+  .bar-fill.left {{ right:50%; }}
+  .bar-val {{ text-align:right; font-weight:700; }}
+  .sig-card {{ background:{PANEL2}; border:1px solid {BORDER}; border-radius:10px; padding:12px 14px; margin-bottom:10px; }}
+  .sig-head {{ display:flex; align-items:center; gap:10px; margin-bottom:8px; flex-wrap:wrap; }}
+  .sig-pair {{ font-weight:700; font-size:14px; }}
+  .sig-dir {{ font-size:11px; font-weight:700; border:1px solid; border-radius:12px; padding:2px 8px; }}
+  .sig-age {{ color:{MUTED}; font-size:11.5px; margin-left:auto; }}
+  .sig-tag {{ background:{GOLD}22; color:{GOLD}; font-size:10px; padding:2px 7px; border-radius:8px; }}
+  .sig-levels {{ display:flex; gap:16px; flex-wrap:wrap; font-size:12.5px; }}
+  .sig-levels .lbl {{ display:block; color:{MUTED}; font-size:10px; text-transform:uppercase; }}
+  table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+  th {{ text-align:left; color:{MUTED}; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; padding:6px 8px; border-bottom:1px solid {BORDER}; }}
+  td {{ padding:8px; border-bottom:1px solid {BORDER}; }}
+  .chip {{ background:{PANEL2}; color:{MUTED}; font-size:9.5px; padding:1px 6px; border-radius:6px; margin-left:6px; }}
+  .empty {{ color:{MUTED}; font-size:13px; padding:16px 0; }}
+  .runs {{ margin-top:10px; }}
+  .run-line {{ font-size:11.5px; color:{MUTED}; display:flex; align-items:center; gap:8px; padding:3px 0; }}
+  .run-dot {{ width:7px; height:7px; border-radius:50%; flex:none; }}
+  .foot {{ color:{DIM}; font-size:11.5px; margin-top:24px; text-align:center; }}
+  @media (max-width: 900px) {{ .grid {{ grid-template-columns: repeat(2,1fr); }} .panels {{ grid-template-columns: 1fr; }} }}
+</style></head>
+<body><div class="wrap">
+
+  <div class="top">
+    <h1>🟡 GOTA SIGNAUX</h1>
+    <div class="sub">Tableau de bord local · lecture seule · actualisé toutes les 90 s</div>
+    {chain_pill}{market_pill}
+  </div>
+
+  <div class="grid">{kpi_html}</div>
+
+  <div class="panels">
+    <div class="panel">
+      <h2>Résultat cumulé</h2>
+      {equity_curve(hist)}
+    </div>
+    <div class="panel">
+      <h2>Force des devises (5 jours)</h2>
+      {strength_bars(st.get("snap", {}).get("data"))}
+      <div style="margin-top:14px;font-size:12px;color:{MUTED}">👀 Zones surveillées : {watch_html}</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Signaux actifs (VIP — déchiffrés localement, jamais publiés en clair)</h2>
+    {active_html}
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Historique des trades clôturés</h2>
+    <table><thead><tr><th>Clôturé</th><th>Paire</th><th>Sens</th><th>Résultat</th><th>R</th></tr></thead>
+    <tbody>{trade_rows}</tbody></table>
+  </div>
+
+  <div class="panel">
+    <h2>Santé de la chaîne cloud (GOTA Continu)</h2>
+    <div class="sub" style="margin-bottom:8px;">{html.escape(data["chain_detail"])}</div>
+    <div class="runs">{runs_html or '<div class="empty">Historique des exécutions indisponible.</div>'}</div>
+  </div>
+
+  <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page</div>
+
+</div></body></html>'''
+
+
+# ------------------------------------------------------------------ serveur
+_PUBLIC_PATHS = {"/favicon.ico"}
+
+
+class Handler(BaseHTTPRequestHandler):
+    def _trusted_local(self) -> bool:
+        return self.client_address[0] in ("127.0.0.1", "::1")
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path not in _PUBLIC_PATHS and not self._trusted_local() and not _check_basic_auth(self.headers.get("Authorization", "")):
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="GOTA Signaux"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if path == "/favicon.ico":
+            try:
+                b = (DIR / "logo.ico").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/x-icon")
+                self.send_header("Content-Length", str(len(b)))
+                self.end_headers()
+                self.wfile.write(b)
+            except Exception:
+                self.send_response(404)
+                self.end_headers()
+            return
+        if path != "/":
+            self.send_response(404)
+            self.end_headers()
+            return
+        try:
+            data = fetch_snapshot()
+            body = render(data).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+        except Exception as e:
+            err = f"<html><body style='background:#06080c;color:#e8ebf0;font-family:sans-serif;padding:40px'><h1>Erreur</h1><pre>{html.escape(str(e))}</pre></body></html>"
+            body = err.encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    def log_message(self, fmt, *args):
+        pass
+
+
+def main():
+    print(f"GOTA Signaux - Tableau de bord sur http://localhost:{PORT}  (Ctrl+C pour arreter)")
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

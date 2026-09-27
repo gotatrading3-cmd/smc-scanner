@@ -6,6 +6,7 @@ from __future__ import annotations
 import sys
 import os
 import json
+import base64
 import html
 import time
 import threading
@@ -58,6 +59,82 @@ TRADE_LOG = DIR / "mt5_trades.log"
 PAUSE_FILE = DIR / ".pause"
 EQUITY_LOG = DIR / "mt5_equity.log"
 PORT = 8080
+
+# ===== PWA - dashboard installable comme une app (PC + mobile) =====
+_PWA_MANIFEST = {
+    "name": "GOTA TRADING",
+    "short_name": "GOTA",
+    "description": "Dashboard et controle des bots GOTA TRADING",
+    "start_url": "/",
+    "scope": "/",
+    "display": "standalone",
+    "background_color": "#0a0e15",
+    "theme_color": "#0a0e15",
+    "icons": [
+        {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+        {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+    ],
+}
+_PWA_SW_JS = """const CACHE = 'gota-v2';
+self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  e.respondWith(
+    fetch(e.request).then(resp => {
+      if (resp && resp.status === 200) {
+        const clone = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+      }
+      return resp;
+    }).catch(() => caches.match(e.request).then(r => r || new Response('Hors-ligne - le dashboard n\\'a pas pu joindre le serveur', {status: 503, headers: {'Content-Type': 'text/plain; charset=utf-8'}})))
+  );
+});"""
+
+
+# ===== AUTH (Basic Auth - obligatoire des qu'on expose en public) =====
+def _load_auth():
+    """Lit (ou genere) les credentials dashboard. Fichier dashboard_auth.json."""
+    auth_file = DIR / "dashboard_auth.json"
+    if auth_file.exists():
+        try:
+            d = json.loads(auth_file.read_text(encoding="utf-8"))
+            u = d.get("user", "gota")
+            p = d.get("password", "")
+            if u and p:
+                return u, p
+        except Exception:
+            pass
+    import secrets
+    pw = secrets.token_urlsafe(10)
+    auth_file.write_text(json.dumps({
+        "user": "gota",
+        "password": pw,
+        "_note": "Modifie user/password puis relance le dashboard."
+    }, indent=2), encoding="utf-8")
+    return "gota", pw
+
+
+_AUTH_USER, _AUTH_PASS = _load_auth()
+
+
+def _check_basic_auth(header_value: str) -> bool:
+    if not header_value or not header_value.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(header_value[6:]).decode("utf-8")
+        u, _, p = decoded.partition(":")
+        return u == _AUTH_USER and p == _AUTH_PASS
+    except Exception:
+        return False
+
+
+# Chemins publics (pas d'auth requise) : indispensables pour install PWA depuis un nouveau device
+_PUBLIC_PATHS = {
+    "/manifest.webmanifest", "/sw.js",
+    "/icon-192.png", "/icon-512.png",
+    "/apple-touch-icon.png", "/favicon.ico",
+}
 APP_VERSION = "2.0"
 
 
@@ -460,7 +537,15 @@ LOGO_SVG = '''
 
 def render_html(data: dict) -> str:
     if data is None:
-        return "<html><body><h1>Connexion MT5 echec</h1></body></html>"
+        return '''<html><head><meta charset="utf-8"><title>GOTA TRADING</title>
+        <style>body{background:#06080c;color:#e8ebf0;font-family:-apple-system,sans-serif;padding:60px;text-align:center}
+        a.btn{display:inline-block;margin-top:22px;background:#d4af37;color:#06080c;font-weight:700;padding:12px 26px;
+        border-radius:24px;text-decoration:none}</style></head><body>
+        <h1>⚠ MT5 non connecté (comptes locaux)</h1>
+        <p style="color:#8a93a1">Le terminal MT5 des bots locaux ne répond pas — normal si ces bots sont à l'arrêt ou juste après un redémarrage.
+        Cela ne concerne que cette page ; le système de signaux tourne dans le cloud, indépendamment de MT5.</p>
+        <a class="btn" href="http://localhost:8090" target="_blank">📡 Voir le tableau de bord des signaux</a>
+        </body></html>'''
     a = data["account"]
     st = data["stats_today"]
     s7 = data["stats_7d"]
@@ -623,6 +708,15 @@ def render_html(data: dict) -> str:
 <meta charset="utf-8">
 <title>GOTA TRADING</title>
 <meta http-equiv="refresh" content="60">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0a0e15">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GOTA TRADING">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icon-192.png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <style>
 * {{ box-sizing: border-box; margin: 0; padding: 0; }}
 html, body {{ height: 100%; }}
@@ -887,6 +981,7 @@ select.acc-input {{ cursor: pointer; }}
     <div class="clock-date" id="clockdate"></div>
   </div>
   <nav class="nav">
+    <a href="http://localhost:8090" target="_blank"><span class="icon">📡</span> Signaux (cloud)</a>
     <a href="#overview"><span class="icon">📊</span> Vue d'ensemble</a>
     <a href="#tickers"><span class="icon">💹</span> Tickers Live</a>
     <a href="#performance"><span class="icon">📈</span> Performance</a>
@@ -1082,14 +1177,77 @@ function updateClock() {{
 setInterval(updateClock, 1000);
 updateClock();
 </script>
-
+<script>
+if ('serviceWorker' in navigator) {{
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {{}}));
+}}
+</script>
 </body>
 </html>"""
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _send_401(self):
+        body = b"Authentication required"
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="GOTA TRADING"')
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _is_trusted_local(self) -> bool:
+        """Vrai si la requete vient de cette meme machine (pas LAN, pas via tunnel).
+        Permet a l'app native (pywebview) d'eviter le prompt d'auth."""
+        if self.client_address[0] not in ("127.0.0.1", "::1"):
+            return False
+        # Si cloudflared forwarde, il y aura un header CF-* (cf-ray, cf-connecting-ip...)
+        for hk in self.headers.keys():
+            if hk.lower().startswith("cf-"):
+                return False
+        return True
+
     def do_GET(self):
         path = urlparse(self.path).path
+        # AUTH : sauf assets PWA publics + sauf requete locale directe (app native)
+        if (path not in _PUBLIC_PATHS
+                and not self._is_trusted_local()
+                and not _check_basic_auth(self.headers.get("Authorization", ""))):
+            return self._send_401()
+        # ----- PWA : manifest, service worker, icones -----
+        if path == "/manifest.webmanifest":
+            body = json.dumps(_PWA_MANIFEST, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/manifest+json; charset=utf-8")
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path == "/sw.js":
+            body = _PWA_SW_JS.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/javascript; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path in ("/icon-192.png", "/icon-512.png", "/apple-touch-icon.png", "/favicon.ico"):
+            try:
+                fn = "logo.ico" if path == "/favicon.ico" else "logo.png"
+                data_bytes = (DIR / fn).read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/x-icon" if path.endswith(".ico") else "image/png")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Content-Length", str(len(data_bytes)))
+                self.end_headers()
+                self.wfile.write(data_bytes)
+            except Exception:
+                self.send_response(404)
+                self.end_headers()
+            return
+        # ----- page principale -----
         if path != "/":
             self.send_response(404)
             self.end_headers()
@@ -1112,6 +1270,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        # AUTH obligatoire sur POST (sauf si requete locale directe)
+        if not self._is_trusted_local() and not _check_basic_auth(self.headers.get("Authorization", "")):
+            return self._send_401()
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8") if length > 0 else ""
         params = parse_qs(body)
@@ -1198,8 +1359,22 @@ def main():
     except Exception as e:
         print(f"  warn chargement initial : {e}")
 
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"GOTA TRADING Dashboard v{APP_VERSION} : http://localhost:{PORT}")
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    # Detection IP LAN pour acces depuis le telephone (meme WiFi)
+    try:
+        import socket as _socket
+        _s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        _s.connect(("8.8.8.8", 80))
+        _lan_ip = _s.getsockname()[0]
+        _s.close()
+    except Exception:
+        _lan_ip = "127.0.0.1"
+    print(f"GOTA TRADING Dashboard v{APP_VERSION}")
+    print(f"  Local (PC)      : http://localhost:{PORT}")
+    print(f"  LAN (telephone) : http://{_lan_ip}:{PORT}")
+    print(f"  Auth user       : {_AUTH_USER}")
+    print(f"  Auth password   : {_AUTH_PASS}")
+    print(f"  (modifie dashboard_auth.json pour changer)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

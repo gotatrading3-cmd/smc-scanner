@@ -1,24 +1,36 @@
 @echo off
 REM ============================================================
 REM  GOTA TRADING - Lanceur application
-REM  Ouvre le tableau de bord en VRAIE fenetre app (Edge dedie).
+REM  1. S'assure que le dashboard tourne.
+REM  2. Lance une fenetre NATIVE (pywebview/WebView2) - pas de navigateur visible.
+REM  3. Fallback Edge --app si pywebview indisponible.
 REM ============================================================
-set "DIR=C:\Users\GOTA TRADING\.claude\trading-analysis"
-set "APPDATA_EDGE=%LOCALAPPDATA%\GotaTradingApp"
+set "DIR=%~dp0"
+set "DIR=%DIR:~0,-1%"
+set "PYTHONW=%LOCALAPPDATA%\Programs\Python\Python312\pythonw.exe"
+if not exist "%PYTHONW%" set "PYTHONW=pythonw"
 
-REM --- 1. Verifie si le dashboard repond sur le port 8080 ---
+REM --- 1. Verifie si le dashboard MT5 (comptes locaux) repond ---
 curl -s -o NUL --max-time 6 http://localhost:8080/
 if errorlevel 1 (
-    REM Dashboard non actif -> on le lance
     start "" /min cmd /c "%DIR%\run_dashboard.cmd"
-    REM Attente ~10s sans 'timeout' (ping marche partout)
     ping -n 11 127.0.0.1 >NUL
 )
 
-REM --- 2. Ouvre le tableau de bord en fenetre application ---
-REM --user-data-dir : profil Edge dedie => TOUJOURS une fenetre app propre,
-REM jamais un onglet melange avec ta navigation Edge habituelle.
-start "" msedge --app=http://localhost:8080 --user-data-dir="%APPDATA_EDGE%" --window-size=1340,880 --window-position=120,60
+REM --- 1bis. Verifie si le tableau de bord des signaux (cloud) repond ---
+curl -s -o NUL --max-time 6 http://localhost:8090/
+if errorlevel 1 (
+    start "" /min cmd /c "%DIR%\run_signal_dashboard.cmd"
+)
 
-REM Fallback si Edge absent
+REM --- 2. Si pywebview installe, lance la fenetre native ---
+"%PYTHONW%" -c "import webview" >NUL 2>&1
+if not errorlevel 1 (
+    start "" "%PYTHONW%" "%DIR%\gota_app.py"
+    exit /b 0
+)
+
+REM --- 3. Fallback : Edge --app (pas de navigateur chrome non plus, mais visiblement Edge) ---
+set "APPDATA_EDGE=%LOCALAPPDATA%\GotaTradingApp"
+start "" msedge --app=http://localhost:8080 --user-data-dir="%APPDATA_EDGE%" --window-size=1340,880 --window-position=120,60
 if errorlevel 1 start http://localhost:8080
