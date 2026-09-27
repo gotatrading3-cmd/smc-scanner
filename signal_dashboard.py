@@ -233,7 +233,7 @@ def strength_bars(snap: dict) -> str:
         rows.append(f'''<div class="bar-row">
           <span class="bar-cur">{html.escape(cur)}</span>
           <div class="bar-track">
-            <div class="bar-fill {side}" style="width:{w:.1f}%;background:{color}"></div>
+            <div class="bar-fill {side}" data-w="{w:.1f}" style="background:{color}"></div>
           </div>
           <span class="bar-val" style="color:{color}">{p:+.2f}%</span>
         </div>''')
@@ -413,7 +413,15 @@ def render_shell() -> str:
 <style>
   :root {{ color-scheme: dark; }}
   * {{ box-sizing: border-box; }}
-  body {{ margin:0; background:{BG}; color:{TXT}; font-family: "Sora", -apple-system, "Segoe UI", Roboto, sans-serif; }}
+  body {{
+    margin:0; color:{TXT}; font-family: "Sora", -apple-system, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(ellipse 900px 460px at 50% 0, {GOLD}17, transparent 60%) fixed,
+      radial-gradient(ellipse 700px 460px at 100% 6%, {BLUE}0d, transparent 60%) fixed,
+      linear-gradient({PANEL2} 1px, transparent 1px) 0 0/46px 46px,
+      linear-gradient(90deg, {PANEL2} 1px, transparent 1px) 0 0/46px 46px,
+      {BG};
+  }}
   .mono {{ font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }}
   .wrap {{ max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }}
   /* ---------- ecran de demarrage ---------- */
@@ -491,7 +499,7 @@ def render_shell() -> str:
   .bar-row {{ display:grid; grid-template-columns: 42px 1fr 60px; align-items:center; gap:8px; font-size:12.5px; }}
   .bar-cur {{ font-weight:700; color:{TXT}; }}
   .bar-track {{ position:relative; height:8px; background:{PANEL2}; border-radius:4px; overflow:hidden; }}
-  .bar-fill {{ position:absolute; top:0; bottom:0; border-radius:4px; }}
+  .bar-fill {{ position:absolute; top:0; bottom:0; border-radius:4px; width:0; transition:width 1s cubic-bezier(.16,.84,.44,1); }}
   .bar-fill.right {{ left:50%; }}
   .bar-fill.left {{ right:50%; }}
   .bar-val {{ text-align:right; font-weight:700; }}
@@ -564,11 +572,39 @@ def render_shell() -> str:
     box.innerHTML = items.map(function(w){{ return '<span>' + w + '</span>'; }}).join('');
   }}
 
+  function animateChart() {{
+    var path = document.querySelector('.chart path');
+    if (!path) return;
+    if (reduceMotion) return;
+    try {{
+      var len = path.getTotalLength();
+      path.style.strokeDasharray = len;
+      path.style.strokeDashoffset = len;
+      path.getBoundingClientRect();
+      path.style.transition = 'stroke-dashoffset 1.3s cubic-bezier(.16,.84,.44,1)';
+      requestAnimationFrame(function(){{ path.style.strokeDashoffset = '0'; }});
+      document.querySelectorAll('.chart circle[cx]').forEach(function(c, i) {{
+        c.style.opacity = 0; c.style.transition = 'opacity .3s ease ' + (0.3 + i * 0.05) + 's';
+        requestAnimationFrame(function(){{ c.style.opacity = 1; }});
+      }});
+    }} catch (e) {{}}
+  }}
+
+  function animateBars() {{
+    var bars = document.querySelectorAll('.bar-fill[data-w]');
+    bars.forEach(function(el, i) {{
+      var w = el.getAttribute('data-w');
+      setTimeout(function(){{ el.style.width = (reduceMotion ? w : w) + '%'; }}, reduceMotion ? 0 : i * 90);
+    }});
+  }}
+
   function initDashboard() {{
     drawSessions();
     setInterval(drawSessions, 30000);
     renderMarquee();
     document.querySelectorAll('.cu').forEach(countUp);
+    animateChart();
+    animateBars();
     if (!reduceMotion && 'IntersectionObserver' in window) {{
       var targets = document.querySelectorAll('.kpi, .panel, .session-card, .sig-card');
       targets.forEach(function(el){{ el.style.opacity=0; el.style.transform='translateY(10px)'; el.style.transition='opacity .45s ease,transform .45s ease'; }});
