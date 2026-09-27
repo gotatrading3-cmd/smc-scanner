@@ -17,6 +17,7 @@ import html
 import json
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -60,14 +61,34 @@ def _check_basic_auth(header_value: str) -> bool:
 
 
 # ------------------------------------------------------------------ donnees (depot public + dechiffrement local)
-def _get(url: str, timeout: float = 6.0):
+_RUNS_CACHE = {"at": 0.0, "value": None, "rate_limited": False}
+_RUNS_TTL = 180  # secondes : l'API GitHub (api.github.com) est limitee a 60 requetes/heure PAR IP sans jeton ;
+# ce cache evite qu'un simple refresh de la page en consomme une a chaque fois. raw.githubusercontent.com
+# (etat + historique) n'est PAS soumis a cette meme limite : seul l'appel "workflow runs" est mis en cache ici.
+
+
+def _get(url: str, timeout: float = 5.0):
     try:
         r = requests.get(url, timeout=timeout, headers={"Accept": "application/vnd.github+json"})
         if r.status_code == 200:
             return r
+        if r.status_code == 403 and "rate limit" in r.text.lower():
+            return "rate_limited"
     except Exception:
         pass
     return None
+
+
+def _get_runs_cached():
+    """Version mise en cache (3 min) de l'appel 'workflow runs', pour ne pas epuiser la limite GitHub (60/h/IP)."""
+    now = time.time()
+    if now - _RUNS_CACHE["at"] < _RUNS_TTL and (_RUNS_CACHE["value"] is not None or _RUNS_CACHE["rate_limited"]):
+        return _RUNS_CACHE["value"], _RUNS_CACHE["rate_limited"]
+    r = _get(f"{API}/actions/workflows/continu.yml/runs?per_page=5")
+    rate_limited = r == "rate_limited"
+    r = None if rate_limited else r
+    _RUNS_CACHE.update(at=now, value=r, rate_limited=rate_limited)
+    return r, rate_limited
 
 
 def _fernet():
@@ -77,30 +98,38 @@ def _fernet():
 
 
 def fetch_snapshot() -> dict:
-    """Tout ce qu'affiche le tableau de bord, recalcule a chaque chargement de page (donnees reelles, jamais inventees)."""
+    """Tout ce qu'affiche le tableau de bord, recalcule a chaque chargement de page (donnees reelles, jamais inventees).
+    Les 3 appels reseau partent EN PARALLELE (chacun limite a 5 s) : la page repond vite meme si GitHub est lent,
+    au lieu d'attendre chaque appel l'un apres l'autre."""
     out = {
         "fetched": datetime.now(timezone.utc), "chain_ok": False, "chain_detail": "inconnu",
         "chain_runs": [], "state": {}, "active": {}, "history": [], "key_ok": False, "error": None,
     }
 
-    runs = _get(f"{API}/actions/workflows/continu.yml/runs?per_page=5")
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_runs = ex.submit(_get_runs_cached)
+        f_state = ex.submit(_get, f"{RAW}/signals_state.json")
+        f_hist = ex.submit(_get, f"{RAW}/signals_history.jsonl")
+        (runs, rate_limited), st, hist = f_runs.result(), f_state.result(), f_hist.result()
+
+    if rate_limited:
+        out["chain_detail"] = "limite de requêtes GitHub atteinte pour ce PC (60/h sans compte) — ça revient tout seul d'ici quelques minutes"
     if runs is not None:
         wr = runs.json().get("workflow_runs", [])
         out["chain_runs"] = wr
         for r in wr:
-            if r.get("status") in ("in_progress", "queued"):
+            if r.get("status") != "completed":  # in_progress, queued, pending, waiting... tout sauf termine = la chaine tourne
                 out["chain_ok"] = True
-                out["chain_detail"] = f"en cours depuis {r['created_at']}"
+                out["chain_detail"] = f"en cours depuis {r['created_at']} ({r.get('status')})"
                 break
         if not out["chain_ok"] and wr:
             last = wr[0]
             age_min = (out["fetched"] - datetime.fromisoformat(last["created_at"].replace("Z", "+00:00"))).total_seconds() / 60
             out["chain_ok"] = last.get("conclusion") == "success" and age_min < 20
             out["chain_detail"] = f"dernier passage il y a {age_min:.0f} min ({last.get('conclusion') or last.get('status')})"
-    else:
+    elif not rate_limited:
         out["chain_detail"] = "GitHub injoignable depuis ce PC (ne veut pas dire que le robot est arrete)"
 
-    st = _get(f"{RAW}/signals_state.json")
     if st is not None:
         raw = st.json()
         enc = raw.pop("private_enc", None)
@@ -116,7 +145,6 @@ def fetch_snapshot() -> dict:
             else:
                 out["error"] = "cle locale (state_key.txt) introuvable : signaux en cours non lisibles ici"
 
-    hist = _get(f"{RAW}/signals_history.jsonl")
     if hist is not None:
         for ln in hist.text.splitlines():
             try:
@@ -213,7 +241,9 @@ def strength_bars(snap: dict) -> str:
 
 
 # ------------------------------------------------------------------ page
-def render(data: dict) -> str:
+def render_content(data: dict) -> str:
+    """Fragment HTML des donnees (servi par /data, injecte par le squelette dans #app). Peut echouer si le reseau
+    est mauvais : l'appelant (do_GET) rattrape toute exception et renvoie un message clair au lieu de planter."""
     now = data["fetched"]
     st, active, hist = data["state"], data["active"], data["history"]
     live_hist = [h for h in hist if h.get("mode") == "live"]
@@ -292,9 +322,57 @@ def render(data: dict) -> str:
         cls = {"success": GREEN, "failure": RED}.get(r.get("conclusion"), GOLD if r.get("status") == "in_progress" else MUTED)
         runs_html += f'<div class="run-line"><span class="run-dot" style="background:{cls}"></span>{r["created_at"][:16].replace("T"," ")} UTC — {r.get("conclusion") or r.get("status")}</div>'
 
+    return f'''
+  <div class="top">
+    <h1>🟡 GOTA SIGNAUX</h1>
+    <div class="sub">Tableau de bord local · lecture seule · actualisé toutes les 90 s</div>
+    {chain_pill}{market_pill}
+  </div>
+
+  <div class="sessions-row" id="sessions"></div>
+
+  <div class="grid">{kpi_html}</div>
+
+  <div class="panels">
+    <div class="panel">
+      <h2>Résultat cumulé</h2>
+      {equity_curve(hist)}
+    </div>
+    <div class="panel">
+      <h2>Force des devises (5 jours)</h2>
+      {strength_bars(st.get("snap", {}).get("data"))}
+      <div style="margin-top:14px;font-size:12px;color:{MUTED}">👀 Zones surveillées : {watch_html}</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Signaux actifs (VIP — déchiffrés localement, jamais publiés en clair)</h2>
+    {active_html}
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <h2>Historique des trades clôturés</h2>
+    <table><thead><tr><th>Clôturé</th><th>Paire</th><th>Sens</th><th>Résultat</th><th>R</th></tr></thead>
+    <tbody>{trade_rows}</tbody></table>
+  </div>
+
+  <div class="panel">
+    <h2>Santé de la chaîne cloud (GOTA Continu)</h2>
+    <div class="sub" style="margin-bottom:8px;">{html.escape(data["chain_detail"])}</div>
+    <div class="runs">{runs_html or '<div class="empty">Historique des exécutions indisponible.</div>'}</div>
+  </div>
+
+  <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page
+    &nbsp;·&nbsp;<a href="http://localhost:8080" style="color:{MUTED}">comptes MT5 locaux →</a></div>
+'''
+
+
+def render_shell() -> str:
+    """Page servie INSTANTANEMENT sur / (aucun appel reseau) : ecran de demarrage GOTA, puis le contenu reel
+    (route /data) vient s'y glisser des qu'il est pret. Ne peut pas echouer : garantit qu'un clic sur l'icone
+    affiche toujours quelque chose tout de suite, meme si GitHub est lent ou injoignable."""
     return f'''<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="90">
 <title>GOTA Signaux — Tableau de bord</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -304,6 +382,24 @@ def render(data: dict) -> str:
   body {{ margin:0; background:{BG}; color:{TXT}; font-family: "Sora", -apple-system, "Segoe UI", Roboto, sans-serif; }}
   .mono {{ font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }}
   .wrap {{ max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }}
+  /* ---------- ecran de demarrage ---------- */
+  #splash {{
+    position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+    background:{BG}; z-index:50; transition:opacity .5s ease; padding:20px; text-align:center;
+  }}
+  #splash.hide {{ opacity:0; pointer-events:none; }}
+  .splash-mark {{ position:relative; width:88px; height:88px; }}
+  .splash-mark svg {{ width:100%; height:100%; }}
+  .splash-ring {{ position:absolute; inset:-14px; border-radius:50%; border:2px solid transparent; border-top-color:{GOLD}; border-right-color:{GOLD}55; animation:spin 1.1s linear infinite; }}
+  .splash-word {{ font-size:22px; font-weight:700; letter-spacing:.14em; }}
+  .splash-word b {{ color:{GOLD}; }}
+  .splash-sub {{ font-family:"IBM Plex Mono",monospace; font-size:12px; color:{MUTED}; letter-spacing:.03em; }}
+  .splash-dots span {{ animation:blink 1.4s ease-in-out infinite; }}
+  .splash-dots span:nth-child(2) {{ animation-delay:.2s; }}
+  .splash-dots span:nth-child(3) {{ animation-delay:.4s; }}
+  .splash-err {{ color:{RED}; font-size:12px; margin-top:6px; display:none; }}
+  @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
+  @media (prefers-reduced-motion: reduce) {{ .splash-ring, .splash-dots span {{ animation:none !important; }} }}
   .top {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:22px; }}
   .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; font-weight:700; }}
   .top .sub {{ color:{MUTED}; font-size:12.5px; font-family:"IBM Plex Mono",monospace; }}
@@ -357,51 +453,20 @@ def render(data: dict) -> str:
   .foot {{ color:{DIM}; font-size:11.5px; margin-top:24px; text-align:center; }}
   @media (max-width: 900px) {{ .grid {{ grid-template-columns: repeat(2,1fr); }} .panels {{ grid-template-columns: 1fr; }} }}
 </style></head>
-<body><div class="wrap">
+<body>
 
-  <div class="top">
-    <h1>🟡 GOTA SIGNAUX</h1>
-    <div class="sub">Tableau de bord local · lecture seule · actualisé toutes les 90 s</div>
-    {chain_pill}{market_pill}
+<div id="splash">
+  <div class="splash-mark">
+    <div class="splash-ring"></div>
+    <svg viewBox="0 0 32 32" fill="none"><path d="M4 24 L11 10 L16 18 L21 6 L28 24" stroke="{GOLD}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </div>
-
-  <div class="sessions-row" id="sessions"></div>
-
-  <div class="grid">{kpi_html}</div>
-
-  <div class="panels">
-    <div class="panel">
-      <h2>Résultat cumulé</h2>
-      {equity_curve(hist)}
-    </div>
-    <div class="panel">
-      <h2>Force des devises (5 jours)</h2>
-      {strength_bars(st.get("snap", {}).get("data"))}
-      <div style="margin-top:14px;font-size:12px;color:{MUTED}">👀 Zones surveillées : {watch_html}</div>
-    </div>
-  </div>
-
-  <div class="panel" style="margin-bottom:16px;">
-    <h2>Signaux actifs (VIP — déchiffrés localement, jamais publiés en clair)</h2>
-    {active_html}
-  </div>
-
-  <div class="panel" style="margin-bottom:16px;">
-    <h2>Historique des trades clôturés</h2>
-    <table><thead><tr><th>Clôturé</th><th>Paire</th><th>Sens</th><th>Résultat</th><th>R</th></tr></thead>
-    <tbody>{trade_rows}</tbody></table>
-  </div>
-
-  <div class="panel">
-    <h2>Santé de la chaîne cloud (GOTA Continu)</h2>
-    <div class="sub" style="margin-bottom:8px;">{html.escape(data["chain_detail"])}</div>
-    <div class="runs">{runs_html or '<div class="empty">Historique des exécutions indisponible.</div>'}</div>
-  </div>
-
-  <div class="foot">Généré le {now.strftime('%d/%m/%Y à %H:%M:%S UTC')} · données publiques du dépôt {REPO} · aucun ordre n'est passé depuis cette page
-    &nbsp;·&nbsp;<a href="http://localhost:8080" style="color:{MUTED}">comptes MT5 locaux →</a></div>
-
+  <div class="splash-word"><b>GOTA</b> SIGNAUX</div>
+  <div class="splash-sub" id="splashMsg">Connexion au robot<span class="splash-dots"><span>.</span><span>.</span><span>.</span></span></div>
+  <div class="splash-err" id="splashErr">Le réseau met du temps à répondre — nouvel essai dans 5 s.</div>
 </div>
+
+<div class="wrap"><div id="app"></div></div>
+
 <script>
   var SESSIONS = [{{n:"Sydney",o:22,c:7}},{{n:"Tokyo",o:0,c:9}},{{n:"Londres",o:8,c:17}},{{n:"New York",o:13,c:22}}];
   function inSess(h,s) {{ return s.o<s.c ? (h>=s.o&&h<s.c) : (h>=s.o||h<s.c); }}
@@ -415,8 +480,6 @@ def render(data: dict) -> str:
              '<span class="session-state">'+(a?'Ouverte':'Fermée')+'</span></div>';
     }}).join('');
   }}
-  drawSessions();
-  setInterval(drawSessions, 30000);
 
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   function countUp(el) {{
@@ -430,14 +493,43 @@ def render(data: dict) -> str:
     }}
     requestAnimationFrame(step);
   }}
-  document.querySelectorAll('.cu').forEach(countUp);
 
-  if (!reduceMotion && 'IntersectionObserver' in window) {{
-    var targets = document.querySelectorAll('.kpi, .panel, .session-card, .sig-card');
-    targets.forEach(function(el){{ el.style.opacity=0; el.style.transform='translateY(10px)'; el.style.transition='opacity .45s ease,transform .45s ease'; }});
-    var io = new IntersectionObserver(function(es){{ es.forEach(function(e){{ if(e.isIntersecting){{ e.target.style.opacity=1; e.target.style.transform='none'; io.unobserve(e.target); }} }}); }}, {{threshold:.1}});
-    targets.forEach(function(el){{ io.observe(el); }});
+  function initDashboard() {{
+    drawSessions();
+    setInterval(drawSessions, 30000);
+    document.querySelectorAll('.cu').forEach(countUp);
+    if (!reduceMotion && 'IntersectionObserver' in window) {{
+      var targets = document.querySelectorAll('.kpi, .panel, .session-card, .sig-card');
+      targets.forEach(function(el){{ el.style.opacity=0; el.style.transform='translateY(10px)'; el.style.transition='opacity .45s ease,transform .45s ease'; }});
+      var io = new IntersectionObserver(function(es){{ es.forEach(function(e){{ if(e.isIntersecting){{ e.target.style.opacity=1; e.target.style.transform='none'; io.unobserve(e.target); }} }}); }}, {{threshold:.1}});
+      targets.forEach(function(el){{ io.observe(el); }});
+    }}
   }}
+
+  // ---- ecran de demarrage : le vrai contenu (/data) vient se glisser dedans des qu'il est pret ----
+  // Ne peut jamais rester bloque : nouvel essai automatique toutes les 5 s tant que /data echoue.
+  function loadData() {{
+    var errEl = document.getElementById('splashErr'), msgEl = document.getElementById('splashMsg');
+    fetch('/data', {{ cache: 'no-store' }}).then(function(r) {{
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.text();
+    }}).then(function(htmlText) {{
+      document.getElementById('app').innerHTML = htmlText;
+      initDashboard();
+      var splash = document.getElementById('splash');
+      splash.classList.add('hide');
+      setTimeout(function(){{ splash.remove(); }}, 550);
+    }}).catch(function() {{
+      errEl.style.display = 'block'; msgEl.style.display = 'none';
+      setTimeout(function(){{ errEl.style.display='none'; msgEl.style.display=''; loadData(); }}, 5000);
+    }});
+  }}
+  function refreshData() {{
+    fetch('/data', {{ cache: 'no-store' }}).then(function(r) {{ return r.text(); }})
+      .then(function(t) {{ document.getElementById('app').innerHTML = t; initDashboard(); }}).catch(function() {{}});
+  }}
+  loadData();
+  setInterval(refreshData, 90000);
 </script>
 </body></html>'''
 
@@ -470,13 +562,23 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
             return
-        if path != "/":
+        if path == "/":
+            # coquille instantanee (aucun appel reseau) : garantit un affichage immediat, meme si GitHub est lent
+            body = render_shell().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path != "/data":
             self.send_response(404)
             self.end_headers()
             return
         try:
             data = fetch_snapshot()
-            body = render(data).encode("utf-8")
+            body = render_content(data).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -484,7 +586,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
         except Exception as e:
-            err = f"<html><body style='background:#06080c;color:#e8ebf0;font-family:sans-serif;padding:40px'><h1>Erreur</h1><pre>{html.escape(str(e))}</pre></body></html>"
+            err = f"<div class='panel'><h2>Erreur</h2><pre style='white-space:pre-wrap;color:{MUTED}'>{html.escape(str(e))}</pre></div>"
             body = err.encode("utf-8")
             self.send_response(500)
             self.send_header("Content-Type", "text/html; charset=utf-8")
