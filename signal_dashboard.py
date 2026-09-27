@@ -323,6 +323,39 @@ def render_content(data: dict) -> str:
         runs_html += f'<div class="run-line"><span class="run-dot" style="background:{cls}"></span>{r["created_at"][:16].replace("T"," ")} UTC — {r.get("conclusion") or r.get("status")}</div>'
 
     return f'''
+  <div class="hero">
+    <div class="eyebrow">— Confluence engine · marchés FX &amp; crypto</div>
+    <div class="orb-holder" aria-hidden="true">
+      <svg viewBox="0 0 260 260">
+        <defs>
+          <radialGradient id="coreGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="{GOLD_L}"/><stop offset="55%" stop-color="{GOLD}"/><stop offset="100%" stop-color="{GOLD}" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="{GOLD}"/><stop offset="100%" stop-color="{BLUE}"/>
+          </linearGradient>
+        </defs>
+        <circle class="core-glow" cx="130" cy="130" r="34" fill="url(#coreGrad)"/>
+        <circle cx="130" cy="130" r="14" fill="{GOLD_L}"/>
+        <circle cx="130" cy="130" r="14" fill="none" stroke="{BG}" stroke-width="2"/>
+        <g class="ring-mid">
+          <circle cx="130" cy="130" r="78" fill="none" stroke="{BORDER}" stroke-width="1.5"/>
+          <circle cx="130" cy="130" r="78" fill="none" stroke="url(#ringGrad)" stroke-width="1.5" stroke-dasharray="20 218" stroke-linecap="round"/>
+          <circle cx="130" cy="52" r="3.5" fill="{BLUE}"/>
+        </g>
+        <g class="ring-out"><circle cx="130" cy="130" r="118" fill="none" stroke="{BORDER}" stroke-width="1" stroke-dasharray="2 7"/></g>
+        <g class="particles">
+          <circle cx="130" cy="12" r="2.6" fill="{GOLD}"/><circle cx="228" cy="180" r="2" fill="{GOLD_L}"/><circle cx="34" cy="180" r="2" fill="{BLUE}"/>
+        </g>
+      </svg>
+    </div>
+    <h2>L'IA qui lit le marché avant d'<span class="accent">agir</span>.</h2>
+    <div class="hero-tags">
+      <span class="htag"><b>28</b> paires FX</span><span class="htag">+ <b>BTC / ETH</b></span>
+      <span class="htag">Analyse <b>H4</b></span><span class="htag">Cloud <b>24/7</b></span>
+    </div>
+  </div>
+
   <div class="top">
     <h1><span class="orb-mini"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="6" fill="{GOLD}"/><g class="ring"><circle cx="17" cy="17" r="15" fill="none" stroke="{BORDER}" stroke-width="1.6"/><circle cx="17" cy="17" r="15" fill="none" stroke="{GOLD}" stroke-width="1.6" stroke-dasharray="10 84" stroke-linecap="round"/></g></svg></span>GOTA SIGNAUX</h1>
     <div class="sub">Tableau de bord local · lecture seule · actualisé toutes les 90 s</div>
@@ -401,7 +434,24 @@ def render_shell() -> str:
   .splash-dots span:nth-child(3) {{ animation-delay:.4s; }}
   .splash-err {{ color:{RED}; font-size:12px; margin-top:6px; display:none; }}
   @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
+  @keyframes spin-rev {{ to {{ transform:rotate(-360deg); }} }}
+  @keyframes pulse {{ 0%,100% {{ opacity:.55; transform:scale(1); }} 50% {{ opacity:1; transform:scale(1.08); }} }}
   @media (prefers-reduced-motion: reduce) {{ .splash-ring, .splash-dots span {{ animation:none !important; }} }}
+  /* ---------- entete (meme mark que la page de presentation) ---------- */
+  .hero {{ text-align:center; padding:6px 0 34px; }}
+  .hero .eyebrow {{ font-family:"IBM Plex Mono",monospace; text-transform:uppercase; letter-spacing:.16em; font-size:10.5px; color:{BLUE}; margin-bottom:14px; }}
+  .orb-holder {{ width:130px; height:130px; position:relative; margin:0 auto; }}
+  .orb-holder svg {{ width:100%; height:100%; overflow:visible; }}
+  .ring-out {{ transform-origin:130px 130px; animation:spin 22s linear infinite; }}
+  .ring-mid {{ transform-origin:130px 130px; animation:spin-rev 16s linear infinite; }}
+  .particles {{ transform-origin:130px 130px; animation:spin 10s linear infinite; }}
+  .core-glow {{ animation:pulse 3.2s ease-in-out infinite; }}
+  @media (prefers-reduced-motion: reduce) {{ .ring-out, .ring-mid, .particles, .core-glow {{ animation:none !important; }} }}
+  .hero h2 {{ font-size:clamp(24px,4vw,34px); font-weight:800; letter-spacing:.005em; margin:16px 0 8px; }}
+  .hero h2 .accent {{ color:{GOLD}; }}
+  .hero-tags {{ display:flex; gap:9px; flex-wrap:wrap; justify-content:center; margin-top:4px; }}
+  .htag {{ font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.04em; color:{MUTED}; border:1px solid {BORDER}; border-radius:14px; padding:5px 11px; background:{PANEL}; }}
+  .htag b {{ color:{TXT}; font-weight:500; }}
   .top {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:22px; }}
   .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; font-weight:700; display:flex; align-items:center; gap:10px; }}
   .top .sub {{ color:{MUTED}; font-size:12.5px; font-family:"IBM Plex Mono",monospace; }}
