@@ -324,12 +324,14 @@ def render_content(data: dict) -> str:
 
     return f'''
   <div class="top">
-    <h1>🟡 GOTA SIGNAUX</h1>
+    <h1><span class="orb-mini"><svg viewBox="0 0 34 34"><circle cx="17" cy="17" r="6" fill="{GOLD}"/><g class="ring"><circle cx="17" cy="17" r="15" fill="none" stroke="{BORDER}" stroke-width="1.6"/><circle cx="17" cy="17" r="15" fill="none" stroke="{GOLD}" stroke-width="1.6" stroke-dasharray="10 84" stroke-linecap="round"/></g></svg></span>GOTA SIGNAUX</h1>
     <div class="sub">Tableau de bord local · lecture seule · actualisé toutes les 90 s</div>
     {chain_pill}{market_pill}
   </div>
 
   <div class="sessions-row" id="sessions"></div>
+
+  <div class="marquee-wrap"><div class="marquee" id="marquee" data-watch="{html.escape(json.dumps(watch), quote=True)}"></div></div>
 
   <div class="grid">{kpi_html}</div>
 
@@ -401,8 +403,18 @@ def render_shell() -> str:
   @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
   @media (prefers-reduced-motion: reduce) {{ .splash-ring, .splash-dots span {{ animation:none !important; }} }}
   .top {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:22px; }}
-  .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; font-weight:700; }}
+  .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; font-weight:700; display:flex; align-items:center; gap:10px; }}
   .top .sub {{ color:{MUTED}; font-size:12.5px; font-family:"IBM Plex Mono",monospace; }}
+  .orb-mini {{ position:relative; width:34px; height:34px; flex:none; }}
+  .orb-mini svg {{ width:100%; height:100%; overflow:visible; }}
+  .orb-mini .ring {{ transform-origin:17px 17px; animation:spin 9s linear infinite; }}
+  @media (prefers-reduced-motion: reduce) {{ .orb-mini .ring {{ animation:none !important; }} }}
+  .marquee-wrap {{ overflow:hidden; border-top:1px solid {BORDER}; border-bottom:1px solid {BORDER}; padding:11px 0; margin-bottom:18px; }}
+  .marquee {{ display:flex; gap:28px; width:max-content; animation:scroll-left 30s linear infinite; }}
+  .marquee span {{ font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:{MUTED}; white-space:nowrap; }}
+  .marquee span::before {{ content:"◆"; color:{BLUE}; margin-right:7px; font-size:7px; vertical-align:middle; }}
+  @keyframes scroll-left {{ from {{ transform:translateX(0); }} to {{ transform:translateX(-50%); }} }}
+  @media (prefers-reduced-motion: reduce) {{ .marquee {{ animation:none !important; }} }}
   .sessions-row {{ display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px; }}
   .session-card {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:11px; padding:12px 13px; transition:border-color .3s,background .3s; }}
   .session-card.active {{ border-color:{GREEN}66; background:linear-gradient(180deg,{GREEN}14,{PANEL} 65%); }}
@@ -494,9 +506,19 @@ def render_shell() -> str:
     requestAnimationFrame(step);
   }}
 
+  function renderMarquee() {{
+    var box = document.getElementById('marquee');
+    if (!box) return;
+    var watch = [];
+    try {{ watch = JSON.parse(box.getAttribute('data-watch') || '[]'); }} catch (e) {{}}
+    var items = watch.length ? watch.concat(watch) : ['Aucune zone particulière surveillée en ce moment'];
+    box.innerHTML = items.map(function(w){{ return '<span>' + w + '</span>'; }}).join('');
+  }}
+
   function initDashboard() {{
     drawSessions();
     setInterval(drawSessions, 30000);
+    renderMarquee();
     document.querySelectorAll('.cu').forEach(countUp);
     if (!reduceMotion && 'IntersectionObserver' in window) {{
       var targets = document.querySelectorAll('.kpi, .panel, .session-card, .sig-card');
