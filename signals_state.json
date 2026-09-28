@@ -77,7 +77,8 @@
   "sun": "2026-09-27",
   "morning": "2026-09-28",
   "scan": "2026-09-28T05:00:00",
-  "movers_am": "2026-09-28"
+  "movers_am": "2026-09-28",
+  "ny": "2026-09-28"
  },
  "previewed": [
   "daily",
@@ -90,7 +91,8 @@
   "sun",
   "morning",
   "scan",
-  "movers_am"
+  "movers_am",
+  "ny"
  ],
  "data_fail_runs": 0,
  "outage_alerted": false,
@@ -206,12 +208,13 @@
   "ranking": 1,
   "morning": 1,
   "scan": 1,
-  "movers": 1
+  "movers": 1,
+  "ny": 1
  },
  "pub_posts": {
   "2026-09-26": 5,
   "2026-09-27": 3,
-  "2026-09-28": 4
+  "2026-09-28": 5
  },
  "pub_sig": {},
  "snap": {
@@ -258,7 +261,7 @@
   }
  },
  "n_symbols": 30,
- "cta_seq": 1,
+ "cta_seq": 2,
  "tg_update_offset": 719080701,
  "private_enc": "gAAAAABqt_QDHwZehUpmAxpOt_Z243OTG6H6dK6CH8St8bmwtqVLEGts2GjyEPvLhRrvhDtTiIaSCmZX_RqU1mNjZLsnIfZzp5X1tsJEo0vROuz8TmA9SKgxNUDbTmXoPitT-7ZAYy1A"
 }
