@@ -2,68 +2,68 @@
  "version": 2,
  "started": "2026-09-26T00:06:05.792745",
  "last_bar": {
-  "EURUSD": "2026-09-28T13:00:00",
-  "GBPUSD": "2026-09-28T13:00:00",
-  "USDJPY": "2026-09-28T13:00:00",
-  "AUDUSD": "2026-09-28T13:00:00",
-  "USDCAD": "2026-09-28T13:00:00",
-  "USDCHF": "2026-09-28T13:00:00",
-  "NZDUSD": "2026-09-28T13:00:00",
-  "EURJPY": "2026-09-28T13:00:00",
-  "GBPJPY": "2026-09-28T13:00:00",
-  "BTCUSD": "2026-09-28T13:00:00",
-  "ETHUSD": "2026-09-28T13:00:00",
-  "EURGBP": "2026-09-28T13:00:00",
-  "EURAUD": "2026-09-28T13:00:00",
-  "EURCAD": "2026-09-28T13:00:00",
-  "EURCHF": "2026-09-28T13:00:00",
-  "EURNZD": "2026-09-28T13:00:00",
-  "GBPAUD": "2026-09-28T13:00:00",
-  "GBPCAD": "2026-09-28T13:00:00",
-  "GBPCHF": "2026-09-28T13:00:00",
-  "GBPNZD": "2026-09-28T13:00:00",
-  "AUDJPY": "2026-09-28T13:00:00",
-  "AUDCAD": "2026-09-28T13:00:00",
-  "AUDCHF": "2026-09-28T13:00:00",
-  "AUDNZD": "2026-09-28T13:00:00",
-  "CADJPY": "2026-09-28T13:00:00",
-  "CADCHF": "2026-09-28T13:00:00",
-  "CHFJPY": "2026-09-28T13:00:00",
-  "NZDJPY": "2026-09-28T13:00:00",
-  "NZDCAD": "2026-09-28T13:00:00",
-  "NZDCHF": "2026-09-28T13:00:00"
+  "EURUSD": "2026-09-28T17:00:00",
+  "GBPUSD": "2026-09-28T17:00:00",
+  "USDJPY": "2026-09-28T17:00:00",
+  "AUDUSD": "2026-09-28T17:00:00",
+  "USDCAD": "2026-09-28T17:00:00",
+  "USDCHF": "2026-09-28T17:00:00",
+  "NZDUSD": "2026-09-28T17:00:00",
+  "EURJPY": "2026-09-28T17:00:00",
+  "GBPJPY": "2026-09-28T17:00:00",
+  "BTCUSD": "2026-09-28T17:00:00",
+  "ETHUSD": "2026-09-28T17:00:00",
+  "EURGBP": "2026-09-28T17:00:00",
+  "EURAUD": "2026-09-28T17:00:00",
+  "EURCAD": "2026-09-28T17:00:00",
+  "EURCHF": "2026-09-28T17:00:00",
+  "EURNZD": "2026-09-28T17:00:00",
+  "GBPAUD": "2026-09-28T17:00:00",
+  "GBPCAD": "2026-09-28T17:00:00",
+  "GBPCHF": "2026-09-28T17:00:00",
+  "GBPNZD": "2026-09-28T17:00:00",
+  "AUDJPY": "2026-09-28T17:00:00",
+  "AUDCAD": "2026-09-28T17:00:00",
+  "AUDCHF": "2026-09-28T17:00:00",
+  "AUDNZD": "2026-09-28T17:00:00",
+  "CADJPY": "2026-09-28T17:00:00",
+  "CADCHF": "2026-09-28T17:00:00",
+  "CHFJPY": "2026-09-28T17:00:00",
+  "NZDJPY": "2026-09-28T17:00:00",
+  "NZDCAD": "2026-09-28T17:00:00",
+  "NZDCHF": "2026-09-28T17:00:00"
  },
  "next_check": {
-  "EURUSD": "2026-09-28T21:01:00",
-  "GBPUSD": "2026-09-28T21:01:00",
-  "USDJPY": "2026-09-28T21:01:00",
-  "AUDUSD": "2026-09-28T21:01:00",
-  "USDCAD": "2026-09-28T21:01:00",
-  "USDCHF": "2026-09-28T21:01:00",
-  "NZDUSD": "2026-09-28T21:01:00",
-  "EURJPY": "2026-09-28T21:01:00",
-  "GBPJPY": "2026-09-28T21:01:00",
-  "BTCUSD": "2026-09-28T21:01:00",
-  "ETHUSD": "2026-09-28T21:01:00",
-  "EURGBP": "2026-09-28T21:01:00",
-  "EURAUD": "2026-09-28T21:01:00",
-  "EURCAD": "2026-09-28T21:01:00",
-  "EURCHF": "2026-09-28T21:01:00",
-  "EURNZD": "2026-09-28T21:01:00",
-  "GBPAUD": "2026-09-28T21:01:00",
-  "GBPCAD": "2026-09-28T21:01:00",
-  "GBPCHF": "2026-09-28T21:01:00",
-  "GBPNZD": "2026-09-28T21:01:00",
-  "AUDJPY": "2026-09-28T21:01:00",
-  "AUDCAD": "2026-09-28T21:01:00",
-  "AUDCHF": "2026-09-28T21:01:00",
-  "AUDNZD": "2026-09-28T21:01:00",
-  "CADJPY": "2026-09-28T21:01:00",
-  "CADCHF": "2026-09-28T21:01:00",
-  "CHFJPY": "2026-09-28T21:01:00",
-  "NZDJPY": "2026-09-28T21:01:00",
-  "NZDCAD": "2026-09-28T21:01:00",
-  "NZDCHF": "2026-09-28T21:01:00"
+  "EURUSD": "2026-09-29T01:01:00",
+  "GBPUSD": "2026-09-29T01:01:00",
+  "USDJPY": "2026-09-29T01:01:00",
+  "AUDUSD": "2026-09-29T01:01:00",
+  "USDCAD": "2026-09-29T01:01:00",
+  "USDCHF": "2026-09-29T01:01:00",
+  "NZDUSD": "2026-09-29T01:01:00",
+  "EURJPY": "2026-09-29T01:01:00",
+  "GBPJPY": "2026-09-29T01:01:00",
+  "BTCUSD": "2026-09-29T01:01:00",
+  "ETHUSD": "2026-09-29T01:01:00",
+  "EURGBP": "2026-09-29T01:01:00",
+  "EURAUD": "2026-09-29T01:01:00",
+  "EURCAD": "2026-09-29T01:01:00",
+  "EURCHF": "2026-09-29T01:01:00",
+  "EURNZD": "2026-09-29T01:01:00",
+  "GBPAUD": "2026-09-29T01:01:00",
+  "GBPCAD": "2026-09-29T01:01:00",
+  "GBPCHF": "2026-09-29T01:01:00",
+  "GBPNZD": "2026-09-29T01:01:00",
+  "AUDJPY": "2026-09-29T01:01:00",
+  "AUDCAD": "2026-09-29T01:01:00",
+  "AUDCHF": "2026-09-29T01:01:00",
+  "AUDNZD": "2026-09-29T01:01:00",
+  "CADJPY": "2026-09-29T01:01:00",
+  "CADCHF": "2026-09-29T01:01:00",
+  "CHFJPY": "2026-09-29T01:01:00",
+  "NZDJPY": "2026-09-29T01:01:00",
+  "NZDCAD": "2026-09-29T01:01:00",
+  "NZDCHF": "2026-09-29T01:01:00"
  },
  "per_day": {
   "2026-09-28": 1
@@ -108,28 +108,28 @@
    "display": "EURGBP",
    "kind": "FVG",
    "dir": -1,
-   "dist_atr": 0.88
+   "dist_atr": 0.37
   },
   "EURAUD": {
    "symbol": "EURAUD",
    "display": "EURAUD",
    "kind": "OB",
    "dir": -1,
-   "dist_atr": 0.11
+   "dist_atr": 0.0
   },
   "EURCAD": {
    "symbol": "EURCAD",
    "display": "EURCAD",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.31
+   "dist_atr": 0.38
   },
   "EURCHF": {
    "symbol": "EURCHF",
    "display": "EURCHF",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.79
+   "dist_atr": 0.88
   },
   "EURNZD": {
    "symbol": "EURNZD",
@@ -143,28 +143,28 @@
    "display": "GBPAUD",
    "kind": "OB",
    "dir": -1,
-   "dist_atr": 0.61
+   "dist_atr": 0.57
   },
   "GBPCAD": {
    "symbol": "GBPCAD",
    "display": "GBPCAD",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.87
+   "dist_atr": 0.46
   },
   "GBPCHF": {
    "symbol": "GBPCHF",
    "display": "GBPCHF",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.82
+   "dist_atr": 0.52
   },
   "GBPNZD": {
    "symbol": "GBPNZD",
    "display": "GBPNZD",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.28
+   "dist_atr": 0.45
   },
   "AUDJPY": null,
   "AUDCAD": null,
@@ -173,7 +173,7 @@
    "display": "AUDCHF",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.51
+   "dist_atr": 0.28
   },
   "AUDNZD": null,
   "CADJPY": {
@@ -188,7 +188,7 @@
    "display": "CADCHF",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.0
+   "dist_atr": 0.21
   },
   "CHFJPY": {
    "symbol": "CHFJPY",
@@ -209,7 +209,7 @@
    "display": "NZDCAD",
    "kind": "FVG",
    "dir": -1,
-   "dist_atr": 0.14
+   "dist_atr": 0.56
   },
   "NZDCHF": null,
   "BTCUSD": {
@@ -217,14 +217,14 @@
    "display": "BTCUSD",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.01
+   "dist_atr": 0.0
   },
   "ETHUSD": {
    "symbol": "ETHUSD",
    "display": "ETHUSD",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.44
+   "dist_atr": 0.28
   },
   "EURUSD": null,
   "GBPUSD": null,
@@ -248,14 +248,14 @@
    "display": "USDCHF",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.54
+   "dist_atr": 0.63
   },
   "NZDUSD": {
    "symbol": "NZDUSD",
    "display": "NZDUSD",
    "kind": "FVG",
    "dir": -1,
-   "dist_atr": 0.18
+   "dist_atr": 0.57
   },
   "EURJPY": null,
   "GBPJPY": null
@@ -327,5 +327,5 @@
  "n_symbols": 30,
  "cta_seq": 0,
  "tg_update_offset": 719080702,
- "private_enc": "gAAAAABqutR6CQ6pwMPpKHPEGS6tVS5YSxe6hC8LKUux0lNpvt3YfwAm2dmwrjtuDDHYNAhA5L3j5PDHpc9O0l22Dl6sJDdN0wF-TN3UxZVic1Zxj2dNiW86OtEuSrFWYF2jeVjqHPAtu7Rww72H9pfvvCfN_s5oWYi6YA3vJWW_Zqo9UTOOmVHtOknKXy6CQti_1_1Y_MFocHuW6H8FfLxricR3YTM0EJRMktY8S4s6DQKYUagrfpjOwEpRF6StyHjHCZUeTnu4nsvrlHP6g0PN1mqLZ8TQJsZhEgT4JsRLMeqOOGlzxzRQZ_C4IMNI-oz6U79sOPD3dqyiI1_mVnOFnkA3BzG3O3pTUtVFtQWlgybav8A4piPNIbSS3WLobnoXo_gv-JDJK1BYxDt5kqTPnSyYCjFGcVaQvRQ3dozdC_BQoVME_I5Z0ZCQYq4mAPA1YgtwxQiUYIN6r7AzSRRlPmJQ6ZdXjtG2KOo5AzSMXRhrKljmuNdmpFde5sEWs-qEhmUv-JJ6PqM54x-iECUkkNV9usdnD3LsTnVgpru80JtVt9qV6N9cP-ue0LJo7q-68iWGXhbVK5UhucpqAmwsnllkPY-3nRMwaOvWNGkdHH-Q7Q9UyVXFFGDC0qyN0a7EoHYqnXo_S4zjTHDU8IlHqJlXR3zo6hjoMufbG1OAuEsbR3tjwT6WOUPMZNTrc-5rGPNAUSasVodQvppUZMzFVjfXT4AN9HH6tkJS_3Ku42dvi619ON1ZR0wakrKZHCXTIVp1BPUvBrFF4Xq_mFqV8vWAnzit6-2nYu_KubPbJ67c7WG8a8wsnPljwZHemWeoR3F7x1ulX2bh3GOl_0rLtiuZd5hmifFjnn44Zor3SJWKSULlFsXxZGRstjgdcd2eKaNINfugvnAAtEc8LATvqwyQ2KQvqJ_Om9UHWWZn-jrSMuh6YsXUz9tkiYN1JXG2sCK2tf07x0NUJ2wD8fdNxXzm-YNOvsaWZ7nQ4h8pWhimeS1AzmAESzq-HImCY8nfdIpsm1ctzKQkDybe0gASh2g9ZgJ7pOoM89iPh6W_th-Wqm0sgEYR-3z4ynI1gi7CEMKbeI8E2IHooBb4Hj4Hx5G67ViMa5v6qtd-PSD0ZVBabgHKBsfsS3PXNLTtAUFXd8maOvXjnDy5DzhNlrLeLag-zpvV4gRofT7PcrTkobih7HoIih-9FBwCwa5tS-_w_gelTZiS3w7Vju0e0t3TTlQVCeVDOciweDXy9uA2lhZY5yXtNUrgW_xyuyEdD5K8Bhjwkb8BsATE47Dio8E33-8faWLtF4lqBN757eqc-MEL4aBPCYNX9K5SmNh0FOP-v1CXwwUXtTRhGmpTLsVQ9ifrBREUQU0yIHId1miM_ciCaAnJLIyhX6nAmUmA3e2SgdUVgG0xhPK3huBHFVDswaGUpRkscJpHq6k8JpDm8nnbTyJTBMvuyC9Xq3Dn5eb3ntPlgKELjoqGJLpyHmE39adQCT_OoQfzEbh0KNXJmHspxV_BnhXcf81S2_-Bj39a79oq0rsz0--GIqbAk9yvpzoTWM8QOhMpA58qIe8AV_k7-vKwISeFKnichSW5f57LgXKXda01U5iy5m8hC0hAxassLJVqLNgjs8hIMgPvgVbS1vv_iAPCdVax3flunRO-eNUFN0JJKQ9PGy_Z_jWkYPQZDyJGOIXpgya9MWxTw5R3S7hACgwA2h8ufrpczMCSUetowGXg0_5miTaY8Egj8zrBhjmVlMVN3brRGwWL6BX4aZp8te0kTFB8IumZApAsi7WBceyMfJGE9tPlz5oXQvq8Jz-5XVnw-oYBB2T4WC0Bnpeyrh_nK9DAI1L6dSCTzTZpdp7gNwlGxP4gvurZwp051lQ7J7KdXUtCgDuUIfrggW21jGfZoe9U7Jp_y_KcwwV5swf8HtUxNYkNxLZXj02fnH_4VBgOdppfVzqy1xmcdgJvjVc="
+ "private_enc": "gAAAAABqutW23QvR6zDLWm0dy1MXuRv4IhbwUf_fjiNG9rU7kwIKqkXgNtyThmlnrOIab9t0M3PfTRA842lgoiITQ3sw_G1oO3poMFWyvkE139QMhgTEySem5Er5bHgtWHMbpf75OSafkvXPNSLiD5cx3487AyqFxrAXNwNRUwcXnXsmZBFAnJ7DjabL_auew9O296Cnz9sui-Dm2msbWS8gwlJUNS0qRQhPjHOOJqzZsdo9wXyTz6jiBV38a6Eay9IHnoDcexoq6Y9-Ud1VKq0N_ZyFXhmU1gEGbawxZzqyfH4DWNBpAR1vdA-s8y2JeZMF7EP8_kxqyuLCzOKVozJrHxejF1uUxC-l15Bmxz0ndsmnLUSbKl6qX_Zfmh-xBdMGCzw3kV725RGzF_KWT-S7mM7_sybgqRiazrIBxfec917PaEay1NN1YcjEPZaqNQzvkimG0UXmyJ2MaKY8rB9HNCs7S5Wg2uHRHc6ocQlfRs3XpMlxoqajYYwPMKXa7MZFYcsLCtVmuW537eWvxduI0LauVW33WDoCnovzLeNzGheu8t4WSR2LZrYsanFI2HJ5CV4YnWg6KT3qg7ulRqHPsOV7iEHiSIB9WpcsnKvFxgN7IymoGe1ZqRd7c0LisUDNxySBQKXMp8SQZuoqVlXlXqXsjNwOunSxRjl-eMN2IWelMeb7p3IMFKjX6beGpLssRcdPsv7jmwFsQiSzgW-FhHB-JYeaRipQzN4DZ-lyfbLcDu6_uxhW5Q98b-tHbaM14qNqfP9FcnWpPU6_7Pm8Q-dEue9BvWAt7ObGAEey9lcdFi7ImkD-ZDZMrdc4nbA2Zkr8WAsFy4IBaoF9w5WqMNI58hI_cO6QkkIFcBGxqmyoSL6HoAeatw4y9nxczA4tRDUMSEAHZgdsjbo8ou8diTXD8VGI8gLOk_3O8-zyx80x0q8bv96Fy6njt2KMBPQMAjp5VWfEnCF6o5FwuCNxcL-tEIarLfoVvD-uJtlPAqUp03c4DZnHgA1QI9hoZGXvK0FFb7FShD49kWmL-j3Zz2mZjQ1gsnRbvwwGxp7R4V8HrmvbgomlofDK56_cVqSEFkRl9N6J1SI95YTtDiIx9TPbGo9F9lIKzeQoaW5w1x47oCfMVSKoWA0jSxRb_xPKGzMxDNpyEFgNUCi75Px0xZSlxourE2B4AdzTAoZWVW5uekd3pVcNKol6SuPbBZ-1wFXlKagyA5dgz_ATpCnJCOzBT_o3lWWTb1LxibcjDzLy7ALKAt3GmGQd_p2dDS4YKdglw62A5qKq0hIfRFiV7NH5FgAIOzrXbac0snxPrvywz8F3MNqjOeRnWcPpLmRebADfjyFEWHWfI-AUYbOo1R-9YaL77SShXbNY2UrRtR9dYfR9TmqzLVSezAVwDs_iAPV8WvVViAK31CrY5qsSa7axT4sct6M1-EejFtESlGmLBRT8uLUCktxkx_8Qovazr32nPClnnRhOlEFY_2wr8CySF6qcwd3V-xyxwoQ4MgsfoNESVfK7B-2NlSzeyhsRocEGI45MM-IRUwjsHFsR2SlaV8pa8P296EpOCbAbalwtku6U0Wyk9W_v_pkGbfg4DgfQftnRG5y6BgnwKdka77L-VfEwXaSAGPR7JSKcNcFWes8ESRmnRGPUuPBTz703iLV3smvBxj8dPX0oh_fYfF5V_J_AIKAP_n65a0_VusjPjsOEFvX9Xyl60rGtddZLmYZYpzVZPu1RR_g_bDyR-PTQpQJtG_oROg7Tpo4vQX6d19IXvHrBpbNiR5for7S5Y3ONvIQmdDbgViLnb3JAoQIckvh9qX_9NyBgXE36bdg1gREHGqDVdRh0eUrBcyRY8wIy-6Nj_dyIFl_zfgEP4vln-G_2EraAx4zr1EA5dHdx2AL0MoGI__SshLYmv78XrOHVFtXq1gFKY1xswNw8EMOhAmY2nnV_oqrt-Ij--qb7YKEhDWc="
 }
