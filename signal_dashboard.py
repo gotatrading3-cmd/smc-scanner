@@ -630,7 +630,9 @@ def render_shell() -> str:
   .mk-layout {{ display:grid; grid-template-columns:1fr 290px; gap:16px; align-items:start; margin-bottom:16px; }}
   @media (max-width: 900px) {{ .mk-layout {{ grid-template-columns:1fr; }} }}
   /* ---------- cotations (liste des paires, style TradingView) ---------- */
-  .tv-quotes {{ border:1px solid {BORDER}; border-radius:14px; overflow:hidden; background:{PANEL}; height:390px; }}
+  .quotes-group {{ margin-bottom:14px; }}
+  .quotes-label {{ font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.06em; color:{DIM}; text-transform:uppercase; margin-bottom:6px; }}
+  .tv-quotes {{ border:1px solid {BORDER}; border-radius:12px; overflow:hidden; background:{PANEL}; }}
   /* ---------- panneau ordre (illustratif - voir mk-note) ---------- */
   .order-panel {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:14px; padding:18px; display:flex; flex-direction:column; gap:14px; }}
   .op-head {{ display:flex; align-items:center; gap:8px; }}
@@ -798,7 +800,18 @@ def render_shell() -> str:
         <div class="op-note">Panneau illustratif — non connecté à un compte réel, aucun ordre n'est envoyé depuis cette page.</div>
       </div>
     </div>
-    <div class="tv-quotes" id="mkQuotes"></div>
+    <div class="quotes-group">
+      <div class="quotes-label">Forex</div>
+      <div class="tv-quotes" id="mkQuotesForex"></div>
+    </div>
+    <div class="quotes-group">
+      <div class="quotes-label">Métaux</div>
+      <div class="tv-quotes" id="mkQuotesMetaux"></div>
+    </div>
+    <div class="quotes-group">
+      <div class="quotes-label">Crypto</div>
+      <div class="tv-quotes" id="mkQuotesCrypto"></div>
+    </div>
   </div>
 </div>
 
@@ -867,10 +880,8 @@ def render_shell() -> str:
   // ---- onglets + graphiques marche en direct (TradingView) : vivent HORS de #app, donc jamais
   // detruits par refreshData() toutes les 90s - le graphique reste stable pendant qu'on le regarde ----
   var marketsLoaded = false;
-  function buildTicker() {{
-    var opts = document.querySelectorAll('#mkSymbol option');
-    var symbols = Array.prototype.map.call(opts, function(o) {{ return {{ proName: o.value, title: o.textContent }}; }});
-    var box = document.getElementById('mkTicker');
+  function mountTicker(elId, symbols, displayMode) {{
+    var box = document.getElementById(elId);
     if (!box) return;
     box.innerHTML = '<div class="tradingview-widget-container__widget"></div>';
     var s = document.createElement('script');
@@ -878,8 +889,13 @@ def render_shell() -> str:
     s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js';
     s.async = true;
     s.text = JSON.stringify({{ symbols: symbols, showSymbolLogo: true, isTransparent: false,
-      displayMode: 'adaptive', colorTheme: 'dark', locale: 'fr', backgroundColor: '{PANEL}' }});
+      displayMode: displayMode || 'adaptive', colorTheme: 'dark', locale: 'fr', backgroundColor: '{PANEL}' }});
     box.appendChild(s);
+  }}
+  function buildTicker() {{
+    var opts = document.querySelectorAll('#mkSymbol option');
+    var symbols = Array.prototype.map.call(opts, function(o) {{ return {{ proName: o.value, title: o.textContent }}; }});
+    mountTicker('mkTicker', symbols, 'adaptive');
   }}
   function loadChart(symbol) {{
     var box = document.getElementById('mkChart');
@@ -896,27 +912,18 @@ def render_shell() -> str:
     box.appendChild(s);
   }}
   function buildQuotes() {{
+    // Meme widget "bandeau" que celui du haut (deja fiable), juste regroupe par categorie et
+    // empile a la verticale au lieu d'un seul long defilement - evite le widget "tableau" separe
+    // qui pouvait s'afficher sans theme (fond blanc, pas de noms) selon le navigateur.
     var opts = document.querySelectorAll('#mkSymbol option');
     var groups = {{ Forex: [], 'Métaux': [], Crypto: [] }};
     Array.prototype.forEach.call(opts, function(o) {{
       var g = o.value.indexOf('OANDA:') === 0 ? 'Métaux' : (o.value.indexOf('COINBASE:') === 0 ? 'Crypto' : 'Forex');
-      groups[g].push({{ name: o.value, displayName: o.textContent }});
+      groups[g].push({{ proName: o.value, title: o.textContent }});
     }});
-    var box = document.getElementById('mkQuotes');
-    if (!box) return;
-    box.innerHTML = '<div class="tradingview-widget-container__widget"></div>';
-    var s = document.createElement('script');
-    s.type = 'text/javascript';
-    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-market-quotes.js';
-    s.async = true;
-    s.text = JSON.stringify({{
-      width: '100%', height: '100%', symbolsGroups: [
-        {{ name: 'Forex', originalName: 'Forex', symbols: groups.Forex }},
-        {{ name: 'Métaux', originalName: 'Métaux', symbols: groups['Métaux'] }},
-        {{ name: 'Crypto', originalName: 'Crypto', symbols: groups.Crypto }},
-      ], colorTheme: 'dark', isTransparent: false, locale: 'fr', backgroundColor: '{PANEL}',
-    }});
-    box.appendChild(s);
+    mountTicker('mkQuotesForex', groups.Forex, 'regular');
+    mountTicker('mkQuotesMetaux', groups['Métaux'], 'regular');
+    mountTicker('mkQuotesCrypto', groups.Crypto, 'regular');
   }}
   function ensureMarketsLoaded() {{
     if (marketsLoaded) return;
