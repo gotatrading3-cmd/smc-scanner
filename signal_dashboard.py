@@ -618,8 +618,19 @@ def render_shell() -> str:
   .tv-chart {{ border:1px solid {BORDER}; border-radius:14px; overflow:hidden; background:{PANEL}; height:520px; position:relative; }}
   .tv-chart > div {{ position:absolute; inset:0; }}
   .tv-chart iframe {{ border:none !important; width:100% !important; height:100% !important; }}
-  .mk-layout {{ display:grid; grid-template-columns:1fr 290px; gap:16px; align-items:start; }}
+  .tv-chart.mk-maxed {{
+    position:fixed; inset:18px; z-index:1000; height:auto; box-shadow:0 20px 60px #000a;
+  }}
+  .mk-expand {{
+    position:absolute; top:10px; right:10px; z-index:5; width:30px; height:30px; border-radius:8px;
+    border:1px solid {BORDER}; background:{BG}cc; color:{TXT}; cursor:pointer; font-size:14px;
+    display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px); transition:background .15s ease;
+  }}
+  .mk-expand:hover {{ background:{PANEL2}; border-color:{GOLD}88; }}
+  .mk-layout {{ display:grid; grid-template-columns:1fr 290px; gap:16px; align-items:start; margin-bottom:16px; }}
   @media (max-width: 900px) {{ .mk-layout {{ grid-template-columns:1fr; }} }}
+  /* ---------- cotations (liste des paires, style TradingView) ---------- */
+  .tv-quotes {{ border:1px solid {BORDER}; border-radius:14px; overflow:hidden; background:{PANEL}; height:390px; }}
   /* ---------- panneau ordre (illustratif - voir mk-note) ---------- */
   .order-panel {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:14px; padding:18px; display:flex; flex-direction:column; gap:14px; }}
   .op-head {{ display:flex; align-items:center; gap:8px; }}
@@ -755,7 +766,10 @@ def render_shell() -> str:
     </div>
     <div class="tv-ticker" id="mkTicker"></div>
     <div class="mk-layout">
-      <div class="tv-chart" id="mkChart"></div>
+      <div class="tv-chart" id="mkChartWrap">
+        <div id="mkChart"></div>
+        <button class="mk-expand" id="mkExpand" type="button" title="Agrandir le graphique">⛶</button>
+      </div>
       <div class="order-panel">
         <div class="op-head">
           <span class="op-ai-dot"></span>
@@ -784,6 +798,7 @@ def render_shell() -> str:
         <div class="op-note">Panneau illustratif — non connecté à un compte réel, aucun ordre n'est envoyé depuis cette page.</div>
       </div>
     </div>
+    <div class="tv-quotes" id="mkQuotes"></div>
   </div>
 </div>
 
@@ -876,14 +891,52 @@ def render_shell() -> str:
     s.async = true;
     s.text = JSON.stringify({{ autosize: true, symbol: symbol, interval: '240', timezone: 'Etc/UTC',
       theme: 'dark', style: '1', locale: 'fr', hide_top_toolbar: false, hide_legend: false,
-      allow_symbol_change: false, withdateranges: true, backgroundColor: '{BG}', gridColor: '{BORDER}' }});
+      hide_side_toolbar: false, allow_symbol_change: false, withdateranges: true,
+      backgroundColor: '{BG}', gridColor: '{BORDER}' }});
+    box.appendChild(s);
+  }}
+  function buildQuotes() {{
+    var opts = document.querySelectorAll('#mkSymbol option');
+    var groups = {{ Forex: [], 'Métaux': [], Crypto: [] }};
+    Array.prototype.forEach.call(opts, function(o) {{
+      var g = o.value.indexOf('OANDA:') === 0 ? 'Métaux' : (o.value.indexOf('COINBASE:') === 0 ? 'Crypto' : 'Forex');
+      groups[g].push({{ name: o.value, displayName: o.textContent }});
+    }});
+    var box = document.getElementById('mkQuotes');
+    if (!box) return;
+    box.innerHTML = '<div class="tradingview-widget-container__widget"></div>';
+    var s = document.createElement('script');
+    s.type = 'text/javascript';
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-market-quotes.js';
+    s.async = true;
+    s.text = JSON.stringify({{
+      width: '100%', height: '100%', symbolsGroups: [
+        {{ name: 'Forex', originalName: 'Forex', symbols: groups.Forex }},
+        {{ name: 'Métaux', originalName: 'Métaux', symbols: groups['Métaux'] }},
+        {{ name: 'Crypto', originalName: 'Crypto', symbols: groups.Crypto }},
+      ], colorTheme: 'dark', isTransparent: true, locale: 'fr', backgroundColor: '{PANEL}',
+    }});
     box.appendChild(s);
   }}
   function ensureMarketsLoaded() {{
     if (marketsLoaded) return;
     marketsLoaded = true;
     buildTicker();
+    buildQuotes();
     loadChart(document.getElementById('mkSymbol').value);
+  }}
+  function initChartExpand() {{
+    var btn = document.getElementById('mkExpand'), wrap = document.getElementById('mkChartWrap');
+    if (!btn || !wrap) return;
+    function setMaxed(on) {{
+      wrap.classList.toggle('mk-maxed', on);
+      btn.textContent = on ? '✕' : '⛶';
+      btn.title = on ? 'Réduire le graphique' : 'Agrandir le graphique';
+    }}
+    btn.addEventListener('click', function() {{ setMaxed(!wrap.classList.contains('mk-maxed')); }});
+    document.addEventListener('keydown', function(e) {{
+      if (e.key === 'Escape' && wrap.classList.contains('mk-maxed')) setMaxed(false);
+    }});
   }}
   function switchTab(name) {{
     document.querySelectorAll('.tab-btn').forEach(function(b) {{ b.classList.toggle('active', b.dataset.tab === name); }});
@@ -978,6 +1031,7 @@ def render_shell() -> str:
   }}
   initTabs();
   initOrderPanel();
+  initChartExpand();
   loadData();
   setInterval(refreshData, 90000);
 </script>
