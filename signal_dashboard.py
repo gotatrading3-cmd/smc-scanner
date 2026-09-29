@@ -419,8 +419,33 @@ def render_content(data: dict) -> str:
 
     return f'''
   <div class="hero">
+    <svg class="hero-net" viewBox="0 0 800 280" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g>
+        <line x1="60" y1="70" x2="150" y2="150"/><line x1="150" y1="150" x2="230" y2="90"/>
+        <line x1="150" y1="150" x2="120" y2="230"/><line x1="230" y1="90" x2="300" y2="190"/>
+        <line x1="230" y1="90" x2="380" y2="55"/><line x1="300" y1="190" x2="210" y2="250"/>
+        <line x1="380" y1="55" x2="430" y2="160"/><line x1="430" y1="160" x2="500" y2="220"/>
+        <line x1="430" y1="160" x2="560" y2="95"/><line x1="500" y1="220" x2="450" y2="260"/>
+        <line x1="560" y1="95" x2="620" y2="175"/><line x1="560" y1="95" x2="680" y2="65"/>
+        <line x1="620" y1="175" x2="640" y2="250"/><line x1="680" y1="65" x2="730" y2="150"/>
+        <line x1="730" y1="150" x2="770" y2="95"/><line x1="620" y1="175" x2="500" y2="220"/>
+      </g>
+      <g fill="{GOLD}">
+        <circle cx="60" cy="70" style="animation-delay:0s"/><circle cx="150" cy="150" style="animation-delay:.4s"/>
+        <circle cx="230" cy="90" style="animation-delay:.8s"/><circle cx="120" cy="230" style="animation-delay:1.2s"/>
+        <circle cx="300" cy="190" style="animation-delay:1.6s"/><circle cx="380" cy="55" style="animation-delay:2s"/>
+        <circle cx="430" cy="160" style="animation-delay:2.4s"/><circle cx="560" cy="95" style="animation-delay:.6s"/>
+        <circle cx="620" cy="175" style="animation-delay:1s"/><circle cx="680" cy="65" style="animation-delay:1.4s"/>
+        <circle cx="730" cy="150" style="animation-delay:1.8s"/><circle cx="770" cy="95" style="animation-delay:2.2s"/>
+      </g>
+      <g fill="{BLUE}">
+        <circle cx="210" cy="250" style="animation-delay:3s"/><circle cx="500" cy="220" style="animation-delay:.2s"/>
+        <circle cx="450" cy="260" style="animation-delay:2.6s"/><circle cx="640" cy="250" style="animation-delay:1.7s"/>
+      </g>
+    </svg>
+    <div class="hero-scan"></div>
     <div class="eyebrow">— Confluence engine · marchés FX &amp; crypto</div>
-    <div class="orb-holder" aria-hidden="true">
+    <div class="orb-holder" id="orbHolder" aria-hidden="true">
       <svg viewBox="0 0 260 260">
         <defs>
           <radialGradient id="coreGrad" cx="50%" cy="50%" r="50%">
@@ -429,7 +454,11 @@ def render_content(data: dict) -> str:
           <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stop-color="{GOLD}"/><stop offset="100%" stop-color="{BLUE}"/>
           </linearGradient>
+          <linearGradient id="sweepGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="{GOLD}" stop-opacity="0"/><stop offset="100%" stop-color="{GOLD_L}" stop-opacity=".45"/>
+          </linearGradient>
         </defs>
+        <g class="radar-sweep"><path d="M130,130 L250,130 L242,52 Z" fill="url(#sweepGrad)"/></g>
         <circle class="core-glow" cx="130" cy="130" r="34" fill="url(#coreGrad)"/>
         <circle cx="130" cy="130" r="14" fill="{GOLD_L}"/>
         <circle cx="130" cy="130" r="14" fill="none" stroke="{BG}" stroke-width="2"/>
@@ -581,17 +610,35 @@ def render_shell() -> str:
   @keyframes pulse {{ 0%,100% {{ opacity:.55; transform:scale(1); }} 50% {{ opacity:1; transform:scale(1.08); }} }}
   @media (prefers-reduced-motion: reduce) {{ .splash-ring, .splash-dots span {{ animation:none !important; }} }}
   /* ---------- entete (meme mark que la page de presentation) ---------- */
-  .hero {{ text-align:center; padding:6px 0 34px; }}
+  .hero {{ position:relative; text-align:center; padding:26px 0 34px; overflow:hidden; }}
+  .hero > * {{ position:relative; z-index:2; }}
   .hero .eyebrow {{ font-family:"IBM Plex Mono",monospace; text-transform:uppercase; letter-spacing:.16em; font-size:10.5px; color:{BLUE}; margin-bottom:14px; }}
-  .orb-holder {{ width:130px; height:130px; position:relative; margin:0 auto; }}
+  .orb-holder {{ width:130px; height:130px; position:relative; margin:0 auto; transition:transform .3s ease-out; }}
   .orb-holder svg {{ width:100%; height:100%; overflow:visible; }}
   .ring-out {{ transform-origin:130px 130px; animation:spin 22s linear infinite; }}
   .ring-mid {{ transform-origin:130px 130px; animation:spin-rev 16s linear infinite; }}
   .particles {{ transform-origin:130px 130px; animation:spin 10s linear infinite; }}
   .core-glow {{ animation:pulse 3.2s ease-in-out infinite; }}
-  @media (prefers-reduced-motion: reduce) {{ .ring-out, .ring-mid, .particles, .core-glow {{ animation:none !important; }} }}
-  .hero h2 {{ font-size:clamp(24px,4vw,34px); font-weight:800; letter-spacing:.005em; margin:16px 0 8px; }}
+  .radar-sweep {{ transform-origin:130px 130px; animation:spin 3.6s linear infinite; }}
+  @media (prefers-reduced-motion: reduce) {{ .ring-out, .ring-mid, .particles, .core-glow, .radar-sweep {{ animation:none !important; }} }}
+  .hero h2 {{ font-size:clamp(24px,4vw,34px); font-weight:800; letter-spacing:.005em; margin:16px 0 8px;
+    animation:hero-reveal 1s cubic-bezier(.16,.84,.44,1) both .1s; }}
   .hero h2 .accent {{ color:{GOLD}; }}
+  @keyframes hero-reveal {{ from {{ clip-path:inset(0 100% 0 0); opacity:0; }} to {{ clip-path:inset(0 -10% 0 0); opacity:1; }} }}
+  /* ---------- reseau neuronal anime en fond du hero ---------- */
+  .hero-net {{ position:absolute; inset:-20px -4% auto -4%; height:280px; z-index:0; opacity:.6; pointer-events:none; }}
+  .hero-net circle {{ animation:net-pulse 4.5s ease-in-out infinite; }}
+  .hero-net line {{ animation:net-line 4.5s ease-in-out infinite; stroke:{BORDER}; stroke-width:1; }}
+  @keyframes net-pulse {{ 0%,100% {{ opacity:.2; r:2; }} 50% {{ opacity:.9; r:3; }} }}
+  @keyframes net-line {{ 0%,100% {{ opacity:.05; }} 50% {{ opacity:.35; }} }}
+  .hero-scan {{ position:absolute; inset:0; z-index:1; pointer-events:none; opacity:.4; mix-blend-mode:screen;
+    background:repeating-linear-gradient(180deg, {GOLD}08 0px, {GOLD}08 1px, transparent 1px, transparent 4px);
+    animation:scan-move 5s linear infinite; }}
+  @keyframes scan-move {{ from {{ background-position-y:0; }} to {{ background-position-y:80px; }} }}
+  @media (prefers-reduced-motion: reduce) {{
+    .hero h2 {{ animation:none !important; clip-path:none !important; opacity:1 !important; }}
+    .hero-net circle, .hero-net line, .hero-scan {{ animation:none !important; }}
+  }}
   .hero-tags {{ display:flex; gap:9px; flex-wrap:wrap; justify-content:center; margin-top:4px; }}
   .htag {{ font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.04em; color:{MUTED}; border:1px solid {BORDER}; border-radius:14px; padding:5px 11px; background:{PANEL}; }}
   .htag b {{ color:{TXT}; font-weight:500; }}
@@ -999,7 +1046,19 @@ def render_shell() -> str:
     renderSide();
   }}
 
+  function initHeroParallax() {{
+    var hero = document.querySelector('.hero'), orb = document.getElementById('orbHolder');
+    if (!hero || !orb || reduceMotion) return;
+    hero.addEventListener('mousemove', function(e) {{
+      var r = hero.getBoundingClientRect();
+      var dx = (e.clientX - (r.left + r.width / 2)) / r.width;
+      var dy = (e.clientY - (r.top + r.height / 2)) / r.height;
+      orb.style.transform = 'translate(' + (dx * 14).toFixed(1) + 'px,' + (dy * 14).toFixed(1) + 'px)';
+    }});
+    hero.addEventListener('mouseleave', function() {{ orb.style.transform = 'translate(0,0)'; }});
+  }}
   function initDashboard() {{
+    initHeroParallax();
     drawSessions();
     setInterval(drawSessions, 30000);
     renderMarquee();
