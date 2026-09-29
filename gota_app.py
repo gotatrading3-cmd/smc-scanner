@@ -47,6 +47,45 @@ def log(msg: str) -> None:
         pass
 
 
+# Verrou mono-instance : cliquer plusieurs fois sur l'icone avant que la fenetre apparaisse (reaction
+# humaine normale si rien ne s'affiche tout de suite) lancait plusieurs gota_app.py en parallele, qui se
+# coupaient la route les uns les autres (vu en pratique : "pywebview non installe" par intermittence).
+# Avec ce verrou, un clic en trop pendant qu'une instance demarre deja ne fait rien - la premiere finit
+# normalement, sans concurrence.
+_LOCK_FILE = DIR / "gota_app.lock"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                              capture_output=True, text=True, timeout=5)
+        return str(pid) in out.stdout
+    except Exception:
+        return True
+
+
+def _acquire_single_instance_lock() -> bool:
+    for _ in range(2):
+        try:
+            with open(_LOCK_FILE, "x", encoding="utf-8") as f:
+                f.write(str(os.getpid()))
+            import atexit
+            atexit.register(lambda: _LOCK_FILE.unlink(missing_ok=True))
+            return True
+        except FileExistsError:
+            try:
+                existing_pid = int(_LOCK_FILE.read_text(encoding="utf-8").strip())
+            except Exception:
+                existing_pid = None
+            if existing_pid and _pid_alive(existing_pid):
+                return False
+            try:
+                _LOCK_FILE.unlink()
+            except Exception:
+                pass
+    return False
+
+
 def wait_for_dashboard(timeout: int = 60) -> bool:
     """Attend que le dashboard reponde. 200 ou 401 = serveur OK."""
     deadline = time.time() + timeout
@@ -96,6 +135,9 @@ def open_fallback(url: str) -> None:
 
 def main() -> None:
     log("=== lancement ===")
+    if not _acquire_single_instance_lock():
+        log("une instance demarre deja - on ne fait rien (evite la concurrence)")
+        return
     url = f"{BASE_URL}/?v={int(time.time())}"  # ecarte tout cache eventuel : chargement toujours frais
 
     if not wait_for_dashboard(60):

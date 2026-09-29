@@ -16,8 +16,11 @@ REM utilisateur ou sont installes "requests"/"cryptography"/"webview".
 set "PYTHONPATH=%APPDATA%\Python\Python312\site-packages"
 set "PYTHONNOUSERSITE="
 
-REM --- 0. Ferme toute instance encore ouverte (fenetre native ou Edge --app) : evite d'afficher du vieux contenu ---
-powershell -NoProfile -WindowStyle Hidden -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'gota_app\.py' -or $_.CommandLine -match 'GotaTradingApp' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >NUL 2>&1
+REM --- 0. Ferme toute VIEILLE instance encore ouverte (fenetre native ou Edge --app) : evite d'afficher
+REM      du vieux contenu. Ne touche PAS a une instance lancee il y a moins de 20s : si l'utilisateur
+REM      reclique parce que rien ne s'affiche encore, ca ne doit pas interrompre le lancement en cours
+REM      (gota_app.py a de toute facon son propre verrou mono-instance depuis 2026-09-29). ---
+powershell -NoProfile -WindowStyle Hidden -Command "$cutoff = (Get-Date).AddSeconds(-20); Get-CimInstance Win32_Process | Where-Object { ($_.CommandLine -match 'gota_app\.py' -or $_.CommandLine -match 'GotaTradingApp') -and $_.CreationDate -lt $cutoff } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >NUL 2>&1
 
 REM --- 1. Le tableau de bord tourne en boucle (run_signal_dashboard.cmd, qui se relance seul si
 REM        besoin) : on n'en lance un 2e QUE si aucune boucle n'existe deja. Sans cette verification,

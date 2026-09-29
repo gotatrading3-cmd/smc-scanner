@@ -16,8 +16,10 @@ import base64
 import html
 import json
 import os
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 # Renforcement du chemin des paquets installes (pip --user) : sur cette machine, selon COMMENT ce script est lance
 # (icone bureau, .cmd, etc.), Python ne trouve pas toujours tout seul le dossier utilisateur ou vivent "requests" et
@@ -36,20 +38,66 @@ try:
 except Exception:
     pass
 
+# Verrou mono-instance : si l'icone est cliquee plusieurs fois rapidement (ca arrive - rien de mal a
+# ca), plusieurs "python signal_dashboard.py" peuvent demarrer en meme temps et se battre sur le meme
+# fichier de log / port, ce qui les fait planter en cascade (vu en pratique : PermissionError sur le
+# .log, puis ModuleNotFoundError par ricochet). Avec ce verrou, les instances en trop s'arretent tout
+# de suite et proprement (pas une erreur) ; la seule instance legitime continue normalement.
+_LOCK_FILE = Path(__file__).parent / "signal_dashboard.lock"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                              capture_output=True, text=True, timeout=5)
+        return str(pid) in out.stdout
+    except Exception:
+        return True  # en cas de doute, ne pas voler le verrou
+
+
+def _acquire_single_instance_lock() -> bool:
+    for _ in range(2):
+        try:
+            with open(_LOCK_FILE, "x", encoding="utf-8") as f:
+                f.write(str(os.getpid()))
+            import atexit
+            atexit.register(lambda: _LOCK_FILE.unlink(missing_ok=True))
+            return True
+        except FileExistsError:
+            try:
+                existing_pid = int(_LOCK_FILE.read_text(encoding="utf-8").strip())
+            except Exception:
+                existing_pid = None
+            if existing_pid and _pid_alive(existing_pid):
+                return False  # une instance legitime tourne deja
+            try:
+                _LOCK_FILE.unlink()  # verrou abandonne par un plantage precedent - on le recupere
+            except Exception:
+                pass
+    return False
+
+
+if not _acquire_single_instance_lock():
+    sys.exit(0)
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
 try:
     import requests
 except ModuleNotFoundError as _e:
-    # Ne doit plus jamais arriver avec le renforcement ci-dessus ; si ca arrive quand meme, message clair dans le
-    # journal (pas juste une traceback Python brute) pour diagnostiquer plus vite.
-    with open(Path(__file__).parent / "signal_dashboard.log", "a", encoding="utf-8") as _f:
-        _f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ERREUR CRITIQUE : {_e} — sys.path={sys.path}\n")
+    # Ne doit plus jamais arriver avec le renforcement ci-dessus (et le verrou mono-instance empeche
+    # maintenant la cause la plus frequente : plusieurs process concurrents). Message clair dans le
+    # journal pour diagnostiquer plus vite si ca arrive quand meme - mais un echec d'ECRITURE du log
+    # ne doit jamais ajouter une 2e erreur par-dessus la premiere.
+    try:
+        with open(Path(__file__).parent / "signal_dashboard.log", "a", encoding="utf-8") as _f:
+            _f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ERREUR CRITIQUE : {_e} — sys.path={sys.path}\n")
+    except Exception:
+        pass
     raise
 
 DIR = Path(__file__).parent
