@@ -19,12 +19,22 @@ set "PYTHONNOUSERSITE="
 REM --- 0. Ferme toute instance encore ouverte (fenetre native ou Edge --app) : evite d'afficher du vieux contenu ---
 powershell -NoProfile -WindowStyle Hidden -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'gota_app\.py' -or $_.CommandLine -match 'GotaTradingApp' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >NUL 2>&1
 
-REM --- 1. Verifie si le tableau de bord des signaux repond ; le lance sinon, sans fenetre visible ---
-curl -s -o NUL --max-time 6 http://localhost:8090/
+REM --- 1. Le tableau de bord tourne en boucle (run_signal_dashboard.cmd, qui se relance seul si
+REM        besoin) : on n'en lance un 2e QUE si aucune boucle n'existe deja. Sans cette verification,
+REM        cliquer sur l'icone au mauvais moment (boucle en train de se relancer, 3s de battement)
+REM        peut empiler des boucles fantomes en arriere-plan pour rien. ---
+powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'run_signal_dashboard\.cmd' }) { exit 0 } else { exit 1 }" >NUL 2>&1
 if errorlevel 1 (
     wscript.exe "%DIR%\hidden_run.vbs" "%DIR%\run_signal_dashboard.cmd"
-    ping -n 11 127.0.0.1 >NUL
 )
+
+REM --- attend que le tableau de bord reponde (jusqu'a ~40s - large marge pour un PC qui vient de
+REM      demarrer, reseau/disque plus lents que d'habitude) au lieu d'une pause fixe a l'aveugle ---
+for /l %%i in (1,1,20) do (
+    curl -s -o NUL --max-time 2 http://localhost:8090/ && goto :dashboard_ready
+    ping -n 2 127.0.0.1 >NUL
+)
+:dashboard_ready
 
 REM --- 2. Lance la fenetre (native si possible ; gota_app.py bascule lui-meme sur Edge/navigateur sinon) ---
 start "" "%PYTHONW%" "%DIR%\gota_app.py"
