@@ -178,9 +178,11 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
     card.text(bg, tx, 108, "Signal du " + when, size=12.5, color=MUTED)
     rr = abs(sig.tps[-1] - sig.entry) / max(sig.risk, 1e-12)
     x = W - 44
-    for lab, w_, fc, tc, ec in ((f"R:R  1 : {rr:.0f}", 142, "none", WHITE, "#3a4452"),
-                                (f"GRADE  {sig.grade}", 150, "none", GOLD, GOLD),
-                                ("ACHAT" if long_ else "VENTE", 150, dir_col, "#06080c", dir_col)):
+    pills = [(f"GRADE  {sig.grade}", 150, "none", GOLD, GOLD),
+             ("ACHAT" if long_ else "VENTE", 150, dir_col, "#06080c", dir_col)]
+    if not footer:  # R:R (fiche PUBLIQUE : reserve au VIP, voir "tableau des niveaux" plus bas)
+        pills.insert(0, (f"R:R  1 : {rr:.0f}", 142, "none", WHITE, "#3a4452"))
+    for lab, w_, fc, tc, ec in pills:
         x -= w_
         card.pill(bg, x, 52, w_, 46, lab, fc=fc, tc=tc, ec=ec, size=14)
         x -= 14
@@ -229,44 +231,48 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
         ax.text(max(xb, 1), sig.zone_hi + yr * 0.03, zname, color=dir_col, fontsize=10.5, fontweight="bold", va="bottom", zorder=8, bbox=zbox)
 
     # ---- position (risque / recompense), comme l'outil "position" d'une plateforme
+    # Fiche PUBLIQUE (footer non vide) : on montre qu'un setup existe (zone, bougie du signal) mais pas
+    # les niveaux d'execution exacts (entree/stop/objectifs/R:R) - reserves au groupe VIP.
     hit = (result or {}).get("hit", [False, False, False])
     stopped = (result or {}).get("stopped", False)
-    ax.add_patch(Rectangle((xs, min(sig.entry, sig.sl)), span, abs(sig.entry - sig.sl), fc=DOWN, alpha=0.20, ec="none", zorder=1.5))
-    ax.add_patch(Rectangle((xs, min(sig.entry, sig.tps[-1])), span, abs(sig.tps[-1] - sig.entry), fc=UP, alpha=0.15, ec="none", zorder=1.5))
-    ax.hlines(sig.sl, xs, xe, colors=DOWN, linewidth=1.8, zorder=5)
-    ax.hlines(sig.entry, xs, xe, colors=WHITE, linewidth=1.6, zorder=5)
-    for k, tp in enumerate(sig.tps):
-        ax.hlines(tp, xs, xe, colors=UP, linestyles="-" if k == 2 else "--", linewidth=1.8 if (k == 2 or hit[k]) else 1.2, zorder=5, alpha=1 if (k == 2 or hit[k]) else 0.75)
+    if not footer:
+        ax.add_patch(Rectangle((xs, min(sig.entry, sig.sl)), span, abs(sig.entry - sig.sl), fc=DOWN, alpha=0.20, ec="none", zorder=1.5))
+        ax.add_patch(Rectangle((xs, min(sig.entry, sig.tps[-1])), span, abs(sig.tps[-1] - sig.entry), fc=UP, alpha=0.15, ec="none", zorder=1.5))
+        ax.hlines(sig.sl, xs, xe, colors=DOWN, linewidth=1.8, zorder=5)
+        ax.hlines(sig.entry, xs, xe, colors=WHITE, linewidth=1.6, zorder=5)
+        for k, tp in enumerate(sig.tps):
+            ax.hlines(tp, xs, xe, colors=UP, linestyles="-" if k == 2 else "--", linewidth=1.8 if (k == 2 or hit[k]) else 1.2, zorder=5, alpha=1 if (k == 2 or hit[k]) else 0.75)
     marker_y = l[xs] - 0.45 * sig.atr if long_ else h[xs] + 0.45 * sig.atr
     ax.scatter([xs], [marker_y], marker="^" if long_ else "v", s=150, color=GOLD, zorder=9, edgecolors="#06080c", linewidths=0.8)
 
-    # etiquettes dans les boites
-    up_y = (sig.entry + sig.tps[-1]) / 2
-    dn_y = (sig.entry + sig.sl) / 2
-    lbox = dict(boxstyle="round,pad=0.3", fc="#080c12", ec="none", alpha=0.82)
-    ax.text(xe - 0.5, up_y, f"OBJECTIF   {_dist(sig, sig.tps[-1])}  ·  +{rr:.0f}R", color=UP, fontsize=10.5, fontweight="bold",
-            va="center", ha="right", zorder=8, bbox=lbox)
-    ax.text(xe - 0.5, dn_y, f"RISQUE   {_dist(sig, sig.sl)}  ·  1R", color=DOWN, fontsize=10.5, fontweight="bold",
-            va="center", ha="right", zorder=8, bbox=lbox)
+    if not footer:
+        # etiquettes dans les boites
+        up_y = (sig.entry + sig.tps[-1]) / 2
+        dn_y = (sig.entry + sig.sl) / 2
+        lbox = dict(boxstyle="round,pad=0.3", fc="#080c12", ec="none", alpha=0.82)
+        ax.text(xe - 0.5, up_y, f"OBJECTIF   {_dist(sig, sig.tps[-1])}  ·  +{rr:.0f}R", color=UP, fontsize=10.5, fontweight="bold",
+                va="center", ha="right", zorder=8, bbox=lbox)
+        ax.text(xe - 0.5, dn_y, f"RISQUE   {_dist(sig, sig.sl)}  ·  1R", color=DOWN, fontsize=10.5, fontweight="bold",
+                va="center", ha="right", zorder=8, bbox=lbox)
 
-    # ---- etiquettes de prix a droite (calquee au-dessus, coordonnees ecran)
-    fig_h = card.fig.get_figheight() * 100
-    tags = [(sig.sl, f"SL  {_pf(sig.sl, digits)}" + ("  ✗" if stopped else ""), DOWN, WHITE),
-            (sig.entry, f"ENTRÉE  {_pf(sig.entry, digits)}", WHITE, "#06080c")]
-    for k, tp in enumerate(sig.tps):
-        tags.append((tp, f"TP{k + 1}  {_pf(tp, digits)}" + ("  ✓" if hit[k] else ""), UP, "#06080c"))
-    pos = []
-    for price, label, fc, tc in tags:
-        px, py = ax.transData.transform((xe, price))
-        pos.append([fig_h - py, label, fc, tc])
-    pos.sort(key=lambda t: t[0])
-    for k in range(1, len(pos)):                      # anti-chevauchement (hauteur d'etiquette 26 px)
-        if pos[k][0] - pos[k - 1][0] < 28:
-            pos[k][0] = pos[k - 1][0] + 28
-    x_tag = ax.transData.transform((xe, ymin))[0] + 10
-    for py, label, fc, tc in pos:
-        card.rrect(ov, x_tag, py - 13, 168, 26, r=4, fc=fc, ec=fc, lw=0.5, z=21)
-        card.text(ov, x_tag + 10, py + 1, label, size=10.8, color=tc, weight="bold", z=22)
+        # ---- etiquettes de prix a droite (calquee au-dessus, coordonnees ecran)
+        fig_h = card.fig.get_figheight() * 100
+        tags = [(sig.sl, f"SL  {_pf(sig.sl, digits)}" + ("  ✗" if stopped else ""), DOWN, WHITE),
+                (sig.entry, f"ENTRÉE  {_pf(sig.entry, digits)}", WHITE, "#06080c")]
+        for k, tp in enumerate(sig.tps):
+            tags.append((tp, f"TP{k + 1}  {_pf(tp, digits)}" + ("  ✓" if hit[k] else ""), UP, "#06080c"))
+        pos = []
+        for price, label, fc, tc in tags:
+            px, py = ax.transData.transform((xe, price))
+            pos.append([fig_h - py, label, fc, tc])
+        pos.sort(key=lambda t: t[0])
+        for k in range(1, len(pos)):                      # anti-chevauchement (hauteur d'etiquette 26 px)
+            if pos[k][0] - pos[k - 1][0] < 28:
+                pos[k][0] = pos[k - 1][0] + 28
+        x_tag = ax.transData.transform((xe, ymin))[0] + 10
+        for py, label, fc, tc in pos:
+            card.rrect(ov, x_tag, py - 13, 168, 26, r=4, fc=fc, ec=fc, lw=0.5, z=21)
+            card.text(ov, x_tag + 10, py + 1, label, size=10.8, color=tc, weight="bold", z=22)
 
     # axes
     ax.grid(color=GRID, linewidth=0.8)
@@ -288,25 +294,26 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
         if sub:
             card.text(ov, CX + 128, CY + 94, sub, size=15, color=WHITE, z=22)
 
-    # ---------------------------------------------------------------- tableau des niveaux
-    TY, TH = 690, 104
-    card.rrect(bg, 44, TY, 1512, TH, r=14, fc=PANEL, ec=BORDER, lw=1.0, z=1)
-    cells = [("ENTRÉE", _pf(sig.entry, digits), WHITE, "prix du signal", None),
-             ("STOP LOSS", _pf(sig.sl, digits), DOWN, "−" + _dist(sig, sig.sl), "stop" if stopped else None)]
-    for k, tp in enumerate(sig.tps):
-        cells.append((f"TAKE PROFIT {k + 1}", _pf(tp, digits), UP, "+" + _dist(sig, tp) + f"  ·  +{k + 1}R", "tp" if hit[k] else None))
-    cells.append(("RATIO R:R", f"1 : {rr:.0f}", GOLD, "risque / objectif", None))
-    cw = 1512 / len(cells)
-    for k, (lab, val, colr, sub, flag) in enumerate(cells):
-        cx = 44 + k * cw + cw / 2
-        if k:
-            bg.add_line(plt.Line2D([44 + k * cw] * 2, [TY + 16, TY + TH - 16], color=BORDER, lw=1.0, zorder=3))
-        card.text(bg, cx, TY + 24, _spaced(lab), size=9.6, color=MUTED, ha="center")
-        card.text(bg, cx, TY + 56, val, size=22, color=colr, weight="bold", ha="center")
-        if flag:
-            card.text(bg, cx, TY + 87, "✓  ATTEINT" if flag == "tp" else "✗  TOUCHÉ", size=11, color=GREEN if flag == "tp" else RED, weight="bold", ha="center")
-        else:
-            card.text(bg, cx, TY + 87, sub, size=10.5, color=MUTED, ha="center")
+    # ---------------------------------------------------------------- tableau des niveaux (VIP uniquement)
+    if not footer:
+        TY, TH = 690, 104
+        card.rrect(bg, 44, TY, 1512, TH, r=14, fc=PANEL, ec=BORDER, lw=1.0, z=1)
+        cells = [("ENTRÉE", _pf(sig.entry, digits), WHITE, "prix du signal", None),
+                 ("STOP LOSS", _pf(sig.sl, digits), DOWN, "−" + _dist(sig, sig.sl), "stop" if stopped else None)]
+        for k, tp in enumerate(sig.tps):
+            cells.append((f"TAKE PROFIT {k + 1}", _pf(tp, digits), UP, "+" + _dist(sig, tp) + f"  ·  +{k + 1}R", "tp" if hit[k] else None))
+        cells.append(("RATIO R:R", f"1 : {rr:.0f}", GOLD, "risque / objectif", None))
+        cw = 1512 / len(cells)
+        for k, (lab, val, colr, sub, flag) in enumerate(cells):
+            cx = 44 + k * cw + cw / 2
+            if k:
+                bg.add_line(plt.Line2D([44 + k * cw] * 2, [TY + 16, TY + TH - 16], color=BORDER, lw=1.0, zorder=3))
+            card.text(bg, cx, TY + 24, _spaced(lab), size=9.6, color=MUTED, ha="center")
+            card.text(bg, cx, TY + 56, val, size=22, color=colr, weight="bold", ha="center")
+            if flag:
+                card.text(bg, cx, TY + 87, "✓  ATTEINT" if flag == "tp" else "✗  TOUCHÉ", size=11, color=GREEN if flag == "tp" else RED, weight="bold", ha="center")
+            else:
+                card.text(bg, cx, TY + 87, sub, size=10.5, color=MUTED, ha="center")
 
     # ---------------------------------------------------------------- pastilles de confirmation (VIP) / invitation (public)
     CYc = 812

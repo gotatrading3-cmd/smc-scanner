@@ -96,32 +96,32 @@ def progress(st: dict, kind: str, pair: str, r: float) -> str:
 
 
 # ------------------------------------------------------------------ rendez-vous quotidiens (donnees reelles)
+# NB (2026-09-30, demande explicite) : le groupe PUBLIC ne doit jamais voir combien ni quelles paires sont
+# analysees/surveillees - seulement une indication qualitative. Le detail (comptes, noms) reste reserve au VIP.
 def _trend_line(snap: dict) -> str:
-    n = snap.get("n_pairs", 0)
-    if not n:
+    if not snap.get("n_pairs"):
         return ""
-    return f"Sur {n} paires, {snap['up']} ont une tendance de fond haussière et {snap['down']} baissière."
+    maj = "plutôt haussière" if snap.get("up", 0) >= snap.get("down", 0) else "plutôt baissière"
+    return f"Tendance de fond {maj} sur l'ensemble du marché en ce moment."
 
 
 def _watch_line(watch: List[str]) -> str:
     if not watch:
         return "Aucune zone intéressante à proximité pour l'instant : la patience fait partie du plan."
-    liste = ", ".join(watch[:6])
-    k = len(watch)
-    return f"👀 {k} paire{'s' if k > 1 else ''} approche{'nt' if k > 1 else ''} d'une zone qui nous intéresse : {liste}. On garde l'œil dessus."
+    return "👀 Certaines zones nous intéressent particulièrement en ce moment. Le détail est réservé au groupe VIP."
 
 
 def morning(st: dict, snap: dict, watch: List[str], handle: str) -> str:
     ranked = snap.get("ranked") or []
     if len(ranked) < 2:
-        return "☀️ Bonjour la team ! On scanne les paires de devises ce matin et on vous prévient ici dès qu'il y a du mouvement 💪"
+        return "☀️ Bonjour la team ! On scanne les marchés ce matin et on vous prévient ici dès qu'il y a du mouvement 💪"
     (t, tp), (b, bp) = ranked[0], ranked[-1]
-    d = dict(top=NAMES.get(t, t), top_pct=pct(tp), bot=NAMES.get(b, b), bot_pct=pct(bp), n=snap.get("n_pairs", 0),
+    d = dict(top=NAMES.get(t, t), top_pct=pct(tp), bot=NAMES.get(b, b), bot_pct=pct(bp),
              trend=_trend_line(snap), watch=_watch_line(watch), h=_handle(handle))
     v = [
         "☀️ Bonjour la team ! Petit tour d'horizon avant l'ouverture.\n\nCôté devises, {top} est la plus forte de la semaine ({top_pct}) et {bot} la plus faible ({bot_pct}). {trend}\n\n{watch}\n\nDès qu'un setup se valide, vous le voyez ici — et le plan complet part dans le VIP.",
         "🌅 Salut tout le monde ! Ce que je vois ce matin : {top} en tête ({top_pct}), {bot} en queue de peloton ({bot_pct}). {trend}\n\n{watch}\n\nOn vous tient au courant tout au long de la journée 💪",
-        "☕ Café en main, on scanne les {n} paires de devises.\n\n{top} domine cette semaine ({top_pct}), {bot} souffre ({bot_pct}). {trend}\n\n{watch}\n\nLe détail des signaux, comme d'habitude, c'est dans le VIP.",
+        "☕ Café en main, on prépare le scan du matin.\n\n{top} domine cette semaine ({top_pct}), {bot} souffre ({bot_pct}). {trend}\n\n{watch}\n\nLe détail des signaux, comme d'habitude, c'est dans le VIP.",
     ]
     return pick(st, "morning", v).format(**d)
 
@@ -131,14 +131,15 @@ def _p2(x: float) -> str:
 
 
 def scan_report(st: dict, hh: int, n_symbols: int, n_sig: int, n_active: int, watch: List[str]) -> str:
-    """Compte rendu apres chaque cloture H4 (donnees reelles du scan) : marches analyses, signaux du jour, paires pres d'une zone."""
+    """Compte rendu apres chaque cloture H4 (donnees reelles du scan) : signaux du jour, sans reveler
+    combien ni quelles paires sont analysees/surveillees (reserve au VIP - demande explicite du 2026-09-30)."""
     a = _activity(n_sig, n_active, 0)
     v = [
-        "🔍 Scan H4 de {hh}:00 UTC terminé : {n} marchés analysés. {a}",
-        "📡 Nouvelle bougie H4 ({hh}:00 UTC) : on vient de repasser {n} marchés en revue. {a}",
-        "🧭 Point après la clôture H4 de {hh}:00 UTC — {n} marchés scannés. {a}",
+        "🔍 Scan H4 de {hh}:00 UTC terminé. {a}",
+        "📡 Nouvelle bougie H4 ({hh}:00 UTC) : on vient de repasser le marché en revue. {a}",
+        "🧭 Point après la clôture H4 de {hh}:00 UTC — analyse en cours. {a}",
     ]
-    text = pick(st, "scan", v).format(hh=f"{hh:02d}", n=n_symbols, a=a)
+    text = pick(st, "scan", v).format(hh=f"{hh:02d}", a=a)
     return text + (f"\n\n{_watch_line(watch)}" if watch else "")
 
 
