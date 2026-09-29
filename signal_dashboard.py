@@ -877,8 +877,8 @@ def render_shell() -> str:
     s.type = 'text/javascript';
     s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js';
     s.async = true;
-    s.text = JSON.stringify({{ symbols: symbols, showSymbolLogo: false, isTransparent: true,
-      displayMode: 'adaptive', colorTheme: 'dark', locale: 'fr' }});
+    s.text = JSON.stringify({{ symbols: symbols, showSymbolLogo: true, isTransparent: false,
+      displayMode: 'adaptive', colorTheme: 'dark', locale: 'fr', backgroundColor: '{PANEL}' }});
     box.appendChild(s);
   }}
   function loadChart(symbol) {{
@@ -914,7 +914,7 @@ def render_shell() -> str:
         {{ name: 'Forex', originalName: 'Forex', symbols: groups.Forex }},
         {{ name: 'Métaux', originalName: 'Métaux', symbols: groups['Métaux'] }},
         {{ name: 'Crypto', originalName: 'Crypto', symbols: groups.Crypto }},
-      ], colorTheme: 'dark', isTransparent: true, locale: 'fr', backgroundColor: '{PANEL}',
+      ], colorTheme: 'dark', isTransparent: false, locale: 'fr', backgroundColor: '{PANEL}',
     }});
     box.appendChild(s);
   }}
