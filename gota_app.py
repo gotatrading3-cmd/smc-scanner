@@ -20,15 +20,19 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-# Path hardening - user site-packages
+# Renforcement du chemin des paquets (pip --user) : voir signal_dashboard.py pour le detail du probleme observe.
 for _c in [
     r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages",
-    os.path.expandvars("%APPDATA%\\Python\\Python312\\site-packages"),
+    os.path.expandvars(r"%APPDATA%\Python\Python312\site-packages"),
     os.path.expanduser("~/AppData/Roaming/Python/Python312/site-packages"),
 ]:
     if _c and os.path.isdir(_c) and _c not in sys.path:
         sys.path.insert(0, _c)
-        break
+try:
+    import site
+    site.addsitedir(r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages")
+except Exception:
+    pass
 
 DIR = Path(__file__).parent
 LOG = DIR / "gota_app.log"
@@ -59,21 +63,35 @@ def wait_for_dashboard(timeout: int = 60) -> bool:
     return False
 
 
+EDGE_PATHS = [
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+]
+
+
 def open_fallback(url: str) -> None:
-    """Ouvre le tableau de bord d'une facon qui marche presque toujours : Edge en mode appli,
-    sinon le navigateur par defaut. Utilise en dernier recours si la fenetre native echoue."""
-    try:
-        appdata_edge = Path(os.environ.get("LOCALAPPDATA", "")) / "GotaTradingApp"
-        subprocess.Popen(["msedge", f"--app={url}", f"--user-data-dir={appdata_edge}",
-                          "--window-size=1340,880", "--window-position=120,60"],
-                         creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
-        log("fallback : Edge --app lance")
-    except Exception as e:
-        log(f"fallback Edge --app echoue ({e}) - navigateur par defaut")
+    """Ouvre le tableau de bord d'une facon qui marche presque toujours. D'abord Edge en mode appli (sans barre
+    d'adresse) SI on trouve son chemin reel sur le disque (un simple "msedge" ne marche pas toujours ici : Windows
+    ne cherche pas les .exe enregistres dans le PATH de la meme facon que dans une invite de commandes). Sinon,
+    le navigateur par defaut (os.startfile), qui marche presque toujours."""
+    edge = next((p for p in EDGE_PATHS if os.path.isfile(p)), None)
+    if edge:
         try:
-            os.startfile(url)  # type: ignore[attr-defined]
-        except Exception as e2:
-            log(f"fallback navigateur par defaut echoue aussi : {e2}")
+            appdata_edge = Path(os.environ.get("LOCALAPPDATA", "")) / "GotaTradingApp"
+            subprocess.Popen([edge, f"--app={url}", f"--user-data-dir={appdata_edge}",
+                              "--window-size=1340,880", "--window-position=120,60"],
+                             creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
+            log("fallback : Edge --app lance (" + edge + ")")
+            return
+        except Exception as e:
+            log(f"fallback Edge --app echoue ({e}) - navigateur par defaut")
+    else:
+        log("Edge introuvable aux emplacements habituels - navigateur par defaut")
+    try:
+        os.startfile(url)  # type: ignore[attr-defined]
+        log("fallback : navigateur par defaut lance")
+    except Exception as e2:
+        log(f"fallback navigateur par defaut echoue aussi : {e2}")
 
 
 def main() -> None:

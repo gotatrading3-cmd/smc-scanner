@@ -16,7 +16,26 @@ import base64
 import html
 import json
 import os
+import sys
 import time
+
+# Renforcement du chemin des paquets installes (pip --user) : sur cette machine, selon COMMENT ce script est lance
+# (icone bureau, .cmd, etc.), Python ne trouve pas toujours tout seul le dossier utilisateur ou vivent "requests" et
+# "cryptography" - deja vu en pratique (ModuleNotFoundError alors que le meme Python les trouve dans un terminal normal).
+# Chemin ecrit en dur (n'a besoin d'aucune variable d'environnement) + ajout via le module site (methode officielle).
+for _c in [
+    r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages",
+    os.path.expandvars(r"%APPDATA%\Python\Python312\site-packages"),
+    os.path.expanduser("~/AppData/Roaming/Python/Python312/site-packages"),
+]:
+    if _c and os.path.isdir(_c) and _c not in sys.path:
+        sys.path.insert(0, _c)
+try:
+    import site
+    site.addsitedir(r"C:\Users\GOTA TRADING\AppData\Roaming\Python\Python312\site-packages")
+except Exception:
+    pass
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,7 +43,14 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-import requests
+try:
+    import requests
+except ModuleNotFoundError as _e:
+    # Ne doit plus jamais arriver avec le renforcement ci-dessus ; si ca arrive quand meme, message clair dans le
+    # journal (pas juste une traceback Python brute) pour diagnostiquer plus vite.
+    with open(Path(__file__).parent / "signal_dashboard.log", "a", encoding="utf-8") as _f:
+        _f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] ERREUR CRITIQUE : {_e} — sys.path={sys.path}\n")
+    raise
 
 DIR = Path(__file__).parent
 PORT = 8090
