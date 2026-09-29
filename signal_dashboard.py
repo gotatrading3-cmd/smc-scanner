@@ -594,7 +594,7 @@ def render_content(data: dict) -> str:
           <circle cx="46" cy="93" r="4.5" fill="{GOLD}"/><text x="32" y="88" text-anchor="end">SESSION</text>
         </g>
         <text x="160" y="164" text-anchor="middle" font-family="Sora" font-size="15" fill="{TXT}" font-weight="700">SCORE</text>
-        <text x="160" y="182" text-anchor="middle" font-family="IBM Plex Mono" font-size="12" fill="{GOLD}">4 / 6 minimum</text>
+        <text x="160" y="182" text-anchor="middle" font-family="IBM Plex Mono" font-size="12" fill="{GOLD}">4 / 7 minimum</text>
       </svg>
       <div class="method-checks">
         <div class="mrow"><span class="n">01</span>Balayage de liquidité</div>
@@ -603,6 +603,7 @@ def render_content(data: dict) -> str:
         <div class="mrow"><span class="n">04</span>RSI en retournement</div>
         <div class="mrow"><span class="n">05</span>Zone Discount / Premium</div>
         <div class="mrow"><span class="n">06</span>Session Londres / New York</div>
+        <div class="mrow"><span class="n">07</span>Kill zone (ouverture Londres/NY)</div>
       </div>
     </div>
   </div>

@@ -390,7 +390,7 @@ class Publisher:
                  "<b>Zone d'entrée</b>",
                  f"{zone} <code>{f(s.zone_lo)} – {f(s.zone_hi)}</code> ({_len_txt(s, abs(s.zone_hi - s.zone_lo))}) : "
                  f"retest frais, bougie de rejet confirmée à la clôture de {s.signal_time[11:16]} UTC.", "",
-                 f"<b>Confirmations ({s.score}/6)</b>"]
+                 f"<b>Confirmations ({s.score}/7)</b>"]
         lines += [f"✓ {t}" for t in ok]
         if miss:
             lines.append(f"• Non remplies : {' · '.join(miss)}")

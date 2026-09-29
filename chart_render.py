@@ -321,9 +321,10 @@ def render_signal_chart(df: pd.DataFrame, sig, out_path: str, digits: int = 5, n
         _invite_bar(card, bg, ov, CYc, footer, contact)
         return card.save(out_path)
     scored =[("sweep", "Liquidité"), ("stack", "OB + FVG"), ("volume", "Volume Profile"),
-              ("momentum", "RSI"), ("discount", "Discount" if long_ else "Premium"), ("session", "Session")]
+              ("momentum", "RSI"), ("discount", "Discount" if long_ else "Premium"), ("session", "Session"),
+              ("killzone", "Kill zone")]
     nsc = sum(1 for k, _ in scored if sig.checks.get(k))
-    lab_t = card.text(bg, 48, CYc + 21, _spaced("Confirmations") + f"   {nsc}/6", size=10, color=MUTED)
+    lab_t = card.text(bg, 48, CYc + 21, _spaced("Confirmations") + f"   {nsc}/7", size=10, color=MUTED)
     xx = 48 + card.width(lab_t) + 26
     t = card.text(ov, xx + 16, CYc + 21, "4 conditions obligatoires  ✓", size=10.8, color=GOLD, weight="bold", z=23)
     wch = card.width(t) + 32

@@ -6,7 +6,7 @@ Le MEME code sert au LIVE (derniere bougie fermee) et au BACKTEST (toutes les
 bougies) -> les statistiques annoncees correspondent exactement a ce qui est poste.
 A la bougie i on n'utilise QUE les bougies <= i (aucun regard vers le futur).
 
-STRATEGIE - 4 conditions obligatoires + 6 confirmations notees (score /6)
+STRATEGIE - 4 conditions obligatoires + 7 confirmations notees (score /7)
   Obligatoires :
     1. Tendance H4 alignee   : EMA50 > EMA200 et cloture > EMA200 (achat) / inverse (vente)
     2. Retest d'une zone     : Order Block ou Fair Value Gap frais, dans le sens de la tendance
@@ -20,7 +20,10 @@ STRATEGIE - 4 conditions obligatoires + 6 confirmations notees (score /6)
     - momentum : RSI(14) sain et en retournement
     - discount : achat en zone Discount / vente en zone Premium (moitie du range)
     - session  : bougie cloturee pendant Londres / New York (07h-20h UTC)
-  Publication a partir de min_score (defaut 4/6). Grade A+ a partir de 5/6.
+    - killzone : bougie cloturee pendant l'ouverture Londres (07h-10h) ou New York (12h-15h) UTC -
+                 fenetres a plus forte participation institutionnelle (2026-09-30, backtest a l'appui :
+                 avgR passe de -0.097 a -0.048 en TEST, PF de 0.81 a 0.90, sur les memes donnees/seuil)
+  Publication a partir de min_score (defaut 4/7). Grade A+ a partir de 5/7.
 
 GESTION : TP1 = 1R (40%), TP2 = 2R (30%), TP3 = 3R (30%). Apres TP1 le stop passe a
 l'entree. Expiration apres 48 bougies. Egalite SL/TP dans la meme bougie => SL d'abord.
@@ -47,7 +50,7 @@ PARAMS = dict(
     sl_min_atr=0.6,
     sl_max_atr=2.5,
     max_spread_risk=0.12,   # spread / risque
-    min_score=4,            # sur 6
+    min_score=4,            # sur 7
     a_plus_score=5,
     tp_rr=(1.0, 2.0, 3.0),
     tp_split=(0.4, 0.3, 0.3),
@@ -69,8 +72,9 @@ CHECK_LABELS = {
     "momentum": "Momentum RSI sain",
     "discount": "Zone Discount / Premium",
     "session": "Session Londres / New York",
+    "killzone": "Kill zone (ouverture Londres/New York)",
 }
-SCORED = ("sweep", "stack", "volume", "momentum", "discount", "session")
+SCORED = ("sweep", "stack", "volume", "momentum", "discount", "session", "killzone")
 
 
 @dataclass
@@ -392,8 +396,11 @@ def _score(z, zones, d, i, h, l, c, o, rsi, swing_hi, swing_lo, K, close_ts, df,
     discount = (mid < eq) if d == 1 else (mid > eq)
     # session Londres / New York (07h-20h UTC)
     session = 7 <= close_ts.hour < 20 and close_ts.weekday() < 5
+    # kill zone : fenetres d'ouverture a plus forte participation institutionnelle (concept ICT/SMC
+    # standard), plus etroites que "session" - Londres 07h-10h UTC, New York 12h-15h UTC
+    killzone = close_ts.weekday() < 5 and (7 <= close_ts.hour < 10 or 12 <= close_ts.hour < 15)
     return {"sweep": sweep, "stack": stack, "volume": volume, "momentum": momentum,
-            "discount": discount, "session": session, "_poc": poc}
+            "discount": discount, "session": session, "killzone": killzone, "_poc": poc}
 
 
 # ------------------------------------------------------------------ simulation d'un trade
