@@ -66,6 +66,22 @@ TXT, MUTED, DIM = "#e8ebf0", "#8a93a1", "#4b5462"
 GOLD, GOLD_L = "#d4af37", "#f1d67c"
 GREEN, RED, BLUE = "#2ecc71", "#ef4444", "#38bdf8"
 
+# Symboles pour l'onglet "Marches en direct" (widgets TradingView, aucune cle requise) : le meme univers que celui
+# que le robot scanne. Format TradingView : prefixe d'echange ou flux agrege ":" + symbole.
+FX_PAIRS = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD", "EURJPY", "GBPJPY", "EURGBP",
+            "EURAUD", "EURCAD", "EURCHF", "EURNZD", "GBPAUD", "GBPCAD", "GBPCHF", "GBPNZD", "AUDJPY", "AUDCAD",
+            "AUDCHF", "AUDNZD", "CADJPY", "CADCHF", "CHFJPY", "NZDJPY", "NZDCAD", "NZDCHF"]
+CRYPTO_PAIRS = ["BTCUSD", "ETHUSD"]
+METAL_PAIRS = ["XAUUSD", "XAGUSD"]
+
+
+def _tv_symbol(sym: str) -> str:
+    if sym in CRYPTO_PAIRS:
+        return f"COINBASE:{sym}"
+    if sym in METAL_PAIRS:
+        return f"OANDA:{sym}"
+    return f"FX:{sym}"
+
 # ------------------------------------------------------------------ auth (reprend dashboard_auth.json, comme dashboard.py)
 def _load_auth() -> tuple[str, str]:
     try:
@@ -521,7 +537,10 @@ def render_content(data: dict) -> str:
 def render_shell() -> str:
     """Page servie INSTANTANEMENT sur / (aucun appel reseau) : ecran de demarrage GOTA, puis le contenu reel
     (route /data) vient s'y glisser des qu'il est pret. Ne peut pas echouer : garantit qu'un clic sur l'icone
-    affiche toujours quelque chose tout de suite, meme si GitHub est lent ou injoignable."""
+    affiche toujours quelque chose tout de suite, meme si GitHub est lent ou injoignable.
+    L'onglet "Marchés en direct" (TradingView) vit ICI, dans la coquille statique, et pas dans le fragment
+    /data qui est remplacé toutes les 90 s : sinon le graphique en direct serait détruit et rechargé sans arrêt."""
+    symbol_options = "".join(f'<option value="{_tv_symbol(s)}">{s}</option>' for s in METAL_PAIRS + FX_PAIRS + CRYPTO_PAIRS)
     return f'''<!doctype html><html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GOTA Signaux — Tableau de bord</title>
@@ -576,6 +595,29 @@ def render_shell() -> str:
   .hero-tags {{ display:flex; gap:9px; flex-wrap:wrap; justify-content:center; margin-top:4px; }}
   .htag {{ font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.04em; color:{MUTED}; border:1px solid {BORDER}; border-radius:14px; padding:5px 11px; background:{PANEL}; }}
   .htag b {{ color:{TXT}; font-weight:500; }}
+  /* ---------- onglets ---------- */
+  .tabs {{ display:flex; gap:8px; margin-bottom:26px; border-bottom:1px solid {BORDER}; padding-bottom:0; }}
+  .tab-btn {{
+    font-family:"Sora",sans-serif; font-weight:600; font-size:13px; color:{MUTED}; background:none; border:none;
+    padding:12px 4px; margin-right:22px; cursor:pointer; position:relative; display:flex; align-items:center; gap:7px;
+  }}
+  .tab-btn .ic {{ font-size:14px; }}
+  .tab-btn.active {{ color:{TXT}; }}
+  .tab-btn.active::after {{ content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:{GOLD}; border-radius:2px; }}
+  .tab-btn:hover {{ color:{TXT}; }}
+  .tabpanel[hidden] {{ display:none; }}
+  /* ---------- marches en direct (TradingView) ---------- */
+  .mk-toolbar {{ display:flex; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }}
+  .mk-select {{
+    background:{PANEL}; color:{TXT}; border:1px solid {BORDER}; border-radius:10px; padding:9px 14px;
+    font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:500;
+  }}
+  .mk-select:focus {{ outline:1px solid {GOLD}; }}
+  .mk-note {{ color:{DIM}; font-size:11px; }}
+  .tv-ticker {{ margin-bottom:16px; border:1px solid {BORDER}; border-radius:12px; overflow:hidden; background:{PANEL}; }}
+  .tv-chart {{ border:1px solid {BORDER}; border-radius:14px; overflow:hidden; background:{PANEL}; height:520px; position:relative; }}
+  .tv-chart > div {{ position:absolute; inset:0; }}
+  .tv-chart iframe {{ border:none !important; width:100% !important; height:100% !important; }}
   .top {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:22px; }}
   .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; font-weight:700; display:flex; align-items:center; gap:10px; }}
   .top .sub {{ color:{MUTED}; font-size:12.5px; font-family:"IBM Plex Mono",monospace; }}
@@ -672,7 +714,23 @@ def render_shell() -> str:
   <div class="splash-err" id="splashErr">Le réseau met du temps à répondre — nouvel essai dans 5 s.</div>
 </div>
 
-<div class="wrap"><div id="app"></div></div>
+<div class="wrap">
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="overview"><span class="ic">📊</span>Vue d'ensemble</button>
+    <button class="tab-btn" data-tab="markets"><span class="ic">📈</span>Marchés en direct</button>
+  </div>
+
+  <div id="tab-overview" class="tabpanel"><div id="app"></div></div>
+
+  <div id="tab-markets" class="tabpanel" hidden>
+    <div class="mk-toolbar">
+      <select class="mk-select" id="mkSymbol">{symbol_options}</select>
+      <span class="mk-note">Graphique en direct, fourni par TradingView — pour situer le marché, pas pour trader depuis cette page.</span>
+    </div>
+    <div class="tv-ticker" id="mkTicker"></div>
+    <div class="tv-chart" id="mkChart"></div>
+  </div>
+</div>
 
 <script>
   var SESSIONS = [{{n:"Sydney",o:22,c:7}},{{n:"Tokyo",o:0,c:9}},{{n:"Londres",o:8,c:17}},{{n:"New York",o:13,c:22}}];
@@ -736,6 +794,56 @@ def render_shell() -> str:
     }});
   }}
 
+  // ---- onglets + graphiques marche en direct (TradingView) : vivent HORS de #app, donc jamais
+  // detruits par refreshData() toutes les 90s - le graphique reste stable pendant qu'on le regarde ----
+  var marketsLoaded = false;
+  function buildTicker() {{
+    var opts = document.querySelectorAll('#mkSymbol option');
+    var symbols = Array.prototype.map.call(opts, function(o) {{ return {{ proName: o.value, title: o.textContent }}; }});
+    var box = document.getElementById('mkTicker');
+    if (!box) return;
+    box.innerHTML = '<div class="tradingview-widget-container__widget"></div>';
+    var s = document.createElement('script');
+    s.type = 'text/javascript';
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js';
+    s.async = true;
+    s.text = JSON.stringify({{ symbols: symbols, showSymbolLogo: false, isTransparent: true,
+      displayMode: 'adaptive', colorTheme: 'dark', locale: 'fr' }});
+    box.appendChild(s);
+  }}
+  function loadChart(symbol) {{
+    var box = document.getElementById('mkChart');
+    if (!box || !symbol) return;
+    box.innerHTML = '<div class="tradingview-widget-container__widget"></div>';
+    var s = document.createElement('script');
+    s.type = 'text/javascript';
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+    s.async = true;
+    s.text = JSON.stringify({{ autosize: true, symbol: symbol, interval: '240', timezone: 'Etc/UTC',
+      theme: 'dark', style: '1', locale: 'fr', hide_top_toolbar: false, hide_legend: false,
+      allow_symbol_change: false, withdateranges: true, backgroundColor: '{BG}', gridColor: '{BORDER}' }});
+    box.appendChild(s);
+  }}
+  function ensureMarketsLoaded() {{
+    if (marketsLoaded) return;
+    marketsLoaded = true;
+    buildTicker();
+    loadChart(document.getElementById('mkSymbol').value);
+  }}
+  function switchTab(name) {{
+    document.querySelectorAll('.tab-btn').forEach(function(b) {{ b.classList.toggle('active', b.dataset.tab === name); }});
+    document.getElementById('tab-overview').hidden = name !== 'overview';
+    document.getElementById('tab-markets').hidden = name !== 'markets';
+    if (name === 'markets') ensureMarketsLoaded();
+  }}
+  function initTabs() {{
+    document.querySelectorAll('.tab-btn').forEach(function(b) {{
+      b.addEventListener('click', function() {{ switchTab(b.dataset.tab); }});
+    }});
+    var sel = document.getElementById('mkSymbol');
+    if (sel) sel.addEventListener('change', function() {{ if (marketsLoaded) loadChart(sel.value); }});
+  }}
+
   function initDashboard() {{
     drawSessions();
     setInterval(drawSessions, 30000);
@@ -773,6 +881,7 @@ def render_shell() -> str:
     fetch('/data', {{ cache: 'no-store' }}).then(function(r) {{ return r.text(); }})
       .then(function(t) {{ document.getElementById('app').innerHTML = t; initDashboard(); }}).catch(function() {{}});
   }}
+  initTabs();
   loadData();
   setInterval(refreshData, 90000);
 </script>
