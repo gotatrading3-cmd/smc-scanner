@@ -54,3 +54,7 @@ brand/logo_original_*.jpg
 
 # cle de chiffrement de l'etat (secret)
 state_key.txt
+
+# Pont MT5 (compte demo) : ledger/etat locaux, rien de public
+mt5_bridge_ledger.json
+mt5_bridge_status.json

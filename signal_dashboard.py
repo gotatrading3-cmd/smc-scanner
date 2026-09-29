@@ -618,6 +618,32 @@ def render_shell() -> str:
   .tv-chart {{ border:1px solid {BORDER}; border-radius:14px; overflow:hidden; background:{PANEL}; height:520px; position:relative; }}
   .tv-chart > div {{ position:absolute; inset:0; }}
   .tv-chart iframe {{ border:none !important; width:100% !important; height:100% !important; }}
+  .mk-layout {{ display:grid; grid-template-columns:1fr 290px; gap:16px; align-items:start; }}
+  @media (max-width: 900px) {{ .mk-layout {{ grid-template-columns:1fr; }} }}
+  /* ---------- panneau ordre (illustratif - voir mk-note) ---------- */
+  .order-panel {{ background:{PANEL}; border:1px solid {BORDER}; border-radius:14px; padding:18px; display:flex; flex-direction:column; gap:14px; }}
+  .op-head {{ display:flex; align-items:center; gap:8px; }}
+  .op-ai-dot {{ width:7px; height:7px; border-radius:50%; background:{GOLD}; box-shadow:0 0 7px {GOLD}; animation:blink 1.8s ease-in-out infinite; flex:none; }}
+  .op-ai-label {{ font-family:"IBM Plex Mono",monospace; font-size:10px; letter-spacing:.06em; color:{MUTED}; text-transform:uppercase; }}
+  .op-symbol {{ margin-left:auto; font-family:"Sora",sans-serif; font-weight:700; font-size:13.5px; color:{TXT}; }}
+  .op-side-toggle {{ display:grid; grid-template-columns:1fr 1fr; background:{PANEL2}; border-radius:10px; padding:3px; gap:3px; }}
+  .op-side {{ font-family:"Sora",sans-serif; font-weight:700; font-size:12px; letter-spacing:.03em; padding:9px 0; border:none; border-radius:8px; background:none; color:{MUTED}; cursor:pointer; transition:all .2s ease; }}
+  .op-side.active[data-side="buy"] {{ background:{GREEN}22; color:{GREEN}; box-shadow:inset 0 0 0 1px {GREEN}55; }}
+  .op-side.active[data-side="sell"] {{ background:{RED}22; color:{RED}; box-shadow:inset 0 0 0 1px {RED}55; }}
+  .op-field label {{ display:block; font-size:10.5px; color:{DIM}; margin-bottom:6px; text-transform:uppercase; letter-spacing:.04em; }}
+  .op-stepper {{ display:flex; align-items:center; justify-content:space-between; background:{PANEL2}; border:1px solid {BORDER}; border-radius:10px; padding:6px; }}
+  .op-step {{ width:28px; height:28px; border-radius:7px; border:1px solid {BORDER}; background:{PANEL}; color:{TXT}; font-size:15px; cursor:pointer; line-height:1; transition:background .15s ease; }}
+  .op-step:hover {{ background:{BORDER}; }}
+  .op-vol {{ font-family:"IBM Plex Mono",monospace; font-size:14px; font-weight:600; color:{TXT}; }}
+  .op-quick-row {{ display:flex; gap:8px; }}
+  .op-quick {{ flex:1; font-family:"IBM Plex Mono",monospace; font-size:10.5px; padding:7px 0; border-radius:8px; border:1px solid {BORDER}; background:{PANEL2}; color:{MUTED}; cursor:pointer; transition:all .15s ease; text-align:center; }}
+  .op-quick.active {{ border-color:{GOLD}88; color:{GOLD}; background:{GOLD}14; }}
+  .op-submit {{ position:relative; overflow:hidden; border:none; border-radius:11px; padding:14px 0; font-family:"Sora",sans-serif; font-weight:700; font-size:13.5px; letter-spacing:.02em; color:#06110b; cursor:pointer; transition:transform .12s ease, box-shadow .25s ease; }}
+  .op-submit[data-side="buy"] {{ background:linear-gradient(135deg,{GREEN},#1fae63); box-shadow:0 6px 20px {GREEN}40; }}
+  .op-submit[data-side="sell"] {{ background:linear-gradient(135deg,{RED},#c23434); box-shadow:0 6px 20px {RED}40; color:#1a0505; }}
+  .op-submit:active {{ transform:scale(.97); }}
+  .op-submit.op-done {{ background:linear-gradient(135deg,{BLUE},#1f7fae) !important; box-shadow:0 6px 20px {BLUE}40; color:#04222f; }}
+  .op-note {{ color:{DIM}; font-size:10.5px; line-height:1.5; text-align:center; }}
   .top {{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:22px; }}
   .top h1 {{ font-size:22px; margin:0; letter-spacing:.5px; font-weight:700; display:flex; align-items:center; gap:10px; }}
   .top .sub {{ color:{MUTED}; font-size:12.5px; font-family:"IBM Plex Mono",monospace; }}
@@ -728,7 +754,36 @@ def render_shell() -> str:
       <span class="mk-note">Graphique en direct, fourni par TradingView — pour situer le marché, pas pour trader depuis cette page.</span>
     </div>
     <div class="tv-ticker" id="mkTicker"></div>
-    <div class="tv-chart" id="mkChart"></div>
+    <div class="mk-layout">
+      <div class="tv-chart" id="mkChart"></div>
+      <div class="order-panel">
+        <div class="op-head">
+          <span class="op-ai-dot"></span>
+          <span class="op-ai-label">IA · Prête</span>
+          <span class="op-symbol" id="opSymbol">—</span>
+        </div>
+        <div class="op-side-toggle">
+          <button class="op-side active" data-side="buy" id="opBuy" type="button">ACHAT</button>
+          <button class="op-side" data-side="sell" id="opSell" type="button">VENTE</button>
+        </div>
+        <div class="op-field">
+          <label>Volume (lots)</label>
+          <div class="op-stepper">
+            <button class="op-step" id="opDec" type="button">−</button>
+            <span class="op-vol" id="opVol">0.10</span>
+            <button class="op-step" id="opInc" type="button">+</button>
+          </div>
+        </div>
+        <div class="op-quick-row">
+          <button class="op-quick active" id="opSl" type="button">SL −0.5%</button>
+          <button class="op-quick active" id="opTp" type="button">TP +1%</button>
+        </div>
+        <button class="op-submit" id="opSubmit" data-side="buy" type="button">
+          <span id="opSubmitLabel">Passer l'ordre (ACHAT)</span>
+        </button>
+        <div class="op-note">Panneau illustratif — non connecté à un compte réel, aucun ordre n'est envoyé depuis cette page.</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -836,12 +891,52 @@ def render_shell() -> str:
     document.getElementById('tab-markets').hidden = name !== 'markets';
     if (name === 'markets') ensureMarketsLoaded();
   }}
+  function syncOpSymbol() {{
+    var sel = document.getElementById('mkSymbol'), lbl = document.getElementById('opSymbol');
+    if (sel && lbl) lbl.textContent = sel.options[sel.selectedIndex].textContent;
+  }}
   function initTabs() {{
     document.querySelectorAll('.tab-btn').forEach(function(b) {{
       b.addEventListener('click', function() {{ switchTab(b.dataset.tab); }});
     }});
     var sel = document.getElementById('mkSymbol');
-    if (sel) sel.addEventListener('change', function() {{ if (marketsLoaded) loadChart(sel.value); }});
+    if (sel) sel.addEventListener('change', function() {{ if (marketsLoaded) loadChart(sel.value); syncOpSymbol(); }});
+    syncOpSymbol();
+  }}
+
+  // ---- panneau "ordre" de l'onglet Marches en direct : purement illustratif (voir .op-note),
+  // aucune connexion reelle, aucun ordre envoye - juste pour l'ambiance "terminal de trading" ----
+  function initOrderPanel() {{
+    var vol = 0.10, side = 'buy';
+    var volEl = document.getElementById('opVol'), submit = document.getElementById('opSubmit'),
+        label = document.getElementById('opSubmitLabel'), buyBtn = document.getElementById('opBuy'),
+        sellBtn = document.getElementById('opSell');
+    if (!submit) return;
+    function renderSide() {{
+      buyBtn.classList.toggle('active', side === 'buy');
+      sellBtn.classList.toggle('active', side === 'sell');
+      submit.dataset.side = side;
+      label.textContent = "Passer l'ordre (" + (side === 'buy' ? 'ACHAT' : 'VENTE') + ')';
+    }}
+    buyBtn.addEventListener('click', function() {{ side = 'buy'; renderSide(); }});
+    sellBtn.addEventListener('click', function() {{ side = 'sell'; renderSide(); }});
+    document.getElementById('opInc').addEventListener('click', function() {{
+      vol = Math.min(5, +(vol + 0.01).toFixed(2)); volEl.textContent = vol.toFixed(2);
+    }});
+    document.getElementById('opDec').addEventListener('click', function() {{
+      vol = Math.max(0.01, +(vol - 0.01).toFixed(2)); volEl.textContent = vol.toFixed(2);
+    }});
+    ['opSl', 'opTp'].forEach(function(id) {{
+      document.getElementById(id).addEventListener('click', function() {{ this.classList.toggle('active'); }});
+    }});
+    submit.addEventListener('click', function() {{
+      if (submit.classList.contains('op-done')) return;
+      submit.classList.add('op-done');
+      var prev = label.textContent;
+      label.textContent = 'Ordre simulé ✓';
+      setTimeout(function() {{ submit.classList.remove('op-done'); label.textContent = prev; }}, 1800);
+    }});
+    renderSide();
   }}
 
   function initDashboard() {{
@@ -882,6 +977,7 @@ def render_shell() -> str:
       .then(function(t) {{ document.getElementById('app').innerHTML = t; initDashboard(); }}).catch(function() {{}});
   }}
   initTabs();
+  initOrderPanel();
   loadData();
   setInterval(refreshData, 90000);
 </script>
