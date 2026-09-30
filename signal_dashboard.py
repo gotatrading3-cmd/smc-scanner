@@ -436,10 +436,16 @@ def render_content(data: dict) -> str:
     watch = [v["display"] for v in (st.get("watch") or {}).values() if v]
     watch_html = ", ".join(html.escape(w) for w in watch[:10]) if watch else "aucune paire particulière en ce moment"
 
+    # "cancelled" = le filet de securite (cron) qui s'efface parce que la chaine principale tourne deja -
+    # normal et frequent, mais illisible pour quelqu'un qui ne connait pas GitHub Actions (on dirait une
+    # panne). On ne montre que ce qui a un sens a lire : en cours / reussi / echoue.
+    STATUS_FR = {"success": "terminé avec succès", "failure": "échoué", "in_progress": "en cours"}
     runs_html = ""
-    for r in data["chain_runs"][:5]:
-        cls = {"success": GREEN, "failure": RED}.get(r.get("conclusion"), GOLD if r.get("status") == "in_progress" else MUTED)
-        runs_html += f'<div class="run-line"><span class="run-dot" style="background:{cls}"></span>{r["created_at"][:16].replace("T"," ")} UTC — {r.get("conclusion") or r.get("status")}</div>'
+    shown = [r for r in data["chain_runs"] if r.get("status") == "in_progress" or r.get("conclusion") in ("success", "failure")][:5]
+    for r in shown:
+        key = r.get("conclusion") or r.get("status")
+        cls = {"success": GREEN, "failure": RED}.get(key, GOLD)
+        runs_html += f'<div class="run-line"><span class="run-dot" style="background:{cls}"></span>{r["created_at"][:16].replace("T"," ")} UTC — {STATUS_FR.get(key, key)}</div>'
 
     links = load_links()
 
@@ -597,14 +603,17 @@ def render_content(data: dict) -> str:
         <text x="160" y="182" text-anchor="middle" font-family="IBM Plex Mono" font-size="12" fill="{GOLD}">4 / 7 minimum</text>
       </svg>
       <div class="method-checks">
-        <div class="mrow"><span class="n">01</span>Balayage de liquidité</div>
-        <div class="mrow"><span class="n">02</span>Zone empilée OB + FVG</div>
-        <div class="mrow"><span class="n">03</span>Volume Profile (POC)</div>
-        <div class="mrow"><span class="n">04</span>RSI en retournement</div>
-        <div class="mrow"><span class="n">05</span>Zone Discount / Premium</div>
-        <div class="mrow"><span class="n">06</span>Session Londres / New York</div>
-        <div class="mrow"><span class="n">07</span>Kill zone (ouverture Londres/NY)</div>
+        <div class="mrow"><span class="n">01</span>Balayage de liquidité<span class="vtag aide" title="Backtest : résultat moyen -0,088R avec, -0,106R sans">Aide</span></div>
+        <div class="mrow"><span class="n">02</span>Zone empilée OB + FVG<span class="vtag neutre" title="Backtest : résultat moyen -0,098R avec, -0,085R sans">Neutre</span></div>
+        <div class="mrow"><span class="n">03</span>Volume Profile (POC)<span class="vtag freine" title="Backtest : résultat moyen -0,185R avec, -0,085R sans — mais peu de vraies données de volume sur le forex">Peu fiable</span></div>
+        <div class="mrow"><span class="n">04</span>RSI en retournement<span class="vtag aide" title="Backtest : résultat moyen -0,085R avec, -0,138R sans">Aide</span></div>
+        <div class="mrow"><span class="n">05</span>Zone Discount / Premium<span class="vtag neutre" title="Backtest : résultat moyen -0,091R avec, -0,089R sans">Neutre</span></div>
+        <div class="mrow"><span class="n">06</span>Session Londres / New York<span class="vtag freine" title="Backtest : résultat moyen -0,104R avec, -0,047R sans">Freine</span></div>
+        <div class="mrow"><span class="n">07</span>Kill zone (ouverture Londres/NY)<span class="vtag aide" title="Backtest : résultat moyen -0,087R avec, -0,127R sans">Aide</span></div>
       </div>
+      <div class="method-note">Étiquette = ce que dit le dernier backtest complet (résultat moyen par trade avec vs sans chaque
+      confirmation) — indicatif, pas une certitude définitive, surtout sur les échantillons les plus petits. Le Volume
+      Profile manque de vraies données de volume sur la plupart des paires FX (source Yahoo) : peu fiable pour l'instant.</div>
     </div>
   </div>
 
@@ -828,6 +837,11 @@ def render_shell() -> str:
   .method {{ display:grid; grid-template-columns:1fr 1.2fr; gap:26px; align-items:center; }}
   .method-checks {{ display:flex; flex-direction:column; }}
   .mrow {{ display:flex; align-items:center; gap:12px; padding:9px 2px; border-bottom:1px solid {BORDER}; font-size:12.5px; }}
+  .vtag {{ font-family:"IBM Plex Mono",monospace; font-size:9.5px; font-weight:700; letter-spacing:.03em; padding:3px 8px; border-radius:10px; margin-left:auto; white-space:nowrap; }}
+  .vtag.aide {{ color:{GREEN}; background:{GREEN}1a; }}
+  .vtag.neutre {{ color:{MUTED}; background:{PANEL2}; }}
+  .vtag.freine {{ color:{RED}; background:{RED}1a; }}
+  .method-note {{ color:{DIM}; font-size:10px; line-height:1.5; margin-top:12px; }}
   .mrow:last-child {{ border-bottom:none; }}
   .mrow .n {{ font-family:"IBM Plex Mono",monospace; color:{GOLD}; font-size:11px; width:16px; flex:none; }}
   /* ---------- bilan hebdo ---------- */
