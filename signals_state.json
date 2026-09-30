@@ -81,7 +81,7 @@
   "morning": "2026-09-30",
   "scan": "2026-09-30T05:00:00",
   "movers_am": "2026-09-30",
-  "ny": "2026-09-29",
+  "ny": "2026-09-30",
   "movers_pm": "2026-09-29",
   "cta": "2026-09-28"
  },
@@ -222,7 +222,7 @@
   "morning": 3,
   "scan": 1,
   "movers": 2,
-  "ny": 2,
+  "ny": 3,
   "public_signal": 2,
   "cta": 1,
   "progress_SL": 2
@@ -232,7 +232,7 @@
   "2026-09-27": 3,
   "2026-09-28": 10,
   "2026-09-29": 9,
-  "2026-09-30": 4
+  "2026-09-30": 5
  },
  "pub_sig": {
   "2026-09-28": 1,
@@ -282,7 +282,7 @@
   }
  },
  "n_symbols": 30,
- "cta_seq": 3,
+ "cta_seq": 4,
  "tg_update_offset": 719080707,
  "private_enc": "gAAAAABqu-zvcrXJ4yspvpWq1QuKE9qzQPE47cX5OQ3i4lCRGDxTG731Mvrmum6YhZ9GJVk-4BDZIUxtwiXbvro95Nr4oenzVilaDpXYwVT2wUJbOi4eAXuNaVVuL39pXotjoWnlCI0fc_j-hZ_4gq6uuq8Gp6QQbg48Jsqog4UnWyxptvk5n32ZxPsRtlfVQBzxUlA4XPYLUWTnhnh77_1ZMc7vCOW-6w=="
 }
