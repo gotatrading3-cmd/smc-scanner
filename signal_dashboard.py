@@ -47,10 +47,15 @@ _LOCK_FILE = Path(__file__).parent / "signal_dashboard.lock"
 
 
 def _pid_alive(pid: int) -> bool:
+    """Vrai seulement si CE pid fait tourner CE script - pas juste "un pid existe avec ce numero"
+    (Windows reutilise les pid tres vite ; verifier juste la presence du numero peut tomber par
+    coincidence sur un tout autre processus lance au meme moment et bloquer le verrou pour rien)."""
     try:
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                              capture_output=True, text=True, timeout=5)
-        return str(pid) in out.stdout
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
+            capture_output=True, text=True, timeout=5)
+        return "signal_dashboard.py" in out.stdout
     except Exception:
         return True  # en cas de doute, ne pas voler le verrou
 

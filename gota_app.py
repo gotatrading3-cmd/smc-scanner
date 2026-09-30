@@ -56,10 +56,14 @@ _LOCK_FILE = DIR / "gota_app.lock"
 
 
 def _pid_alive(pid: int) -> bool:
+    """Vrai seulement si CE pid fait tourner CE script (voir signal_dashboard.py pour le detail :
+    Windows reutilise les pid tres vite, verifier juste le numero peut tomber sur un autre processus)."""
     try:
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                              capture_output=True, text=True, timeout=5)
-        return str(pid) in out.stdout
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine"],
+            capture_output=True, text=True, timeout=5)
+        return "gota_app.py" in out.stdout
     except Exception:
         return True
 
