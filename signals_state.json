@@ -2,68 +2,68 @@
  "version": 2,
  "started": "2026-09-26T00:06:05.792745",
  "last_bar": {
-  "EURUSD": "2026-10-02T17:00:00",
-  "GBPUSD": "2026-10-02T17:00:00",
-  "USDJPY": "2026-10-02T17:00:00",
-  "AUDUSD": "2026-10-02T17:00:00",
-  "USDCAD": "2026-10-02T17:00:00",
+  "EURUSD": "2026-10-02T21:00:00",
+  "GBPUSD": "2026-10-02T21:00:00",
+  "USDJPY": "2026-10-02T21:00:00",
+  "AUDUSD": "2026-10-02T21:00:00",
+  "USDCAD": "2026-10-02T21:00:00",
   "USDCHF": "2026-10-02T17:00:00",
-  "NZDUSD": "2026-10-02T17:00:00",
-  "EURJPY": "2026-10-02T17:00:00",
-  "GBPJPY": "2026-10-02T17:00:00",
-  "BTCUSD": "2026-10-02T17:00:00",
-  "ETHUSD": "2026-10-02T17:00:00",
-  "EURGBP": "2026-10-02T17:00:00",
-  "EURAUD": "2026-10-02T17:00:00",
-  "EURCAD": "2026-10-02T17:00:00",
-  "EURCHF": "2026-10-02T17:00:00",
-  "EURNZD": "2026-10-02T17:00:00",
-  "GBPAUD": "2026-10-02T17:00:00",
-  "GBPCAD": "2026-10-02T17:00:00",
-  "GBPCHF": "2026-10-02T17:00:00",
-  "GBPNZD": "2026-10-02T17:00:00",
-  "AUDJPY": "2026-10-02T17:00:00",
-  "AUDCAD": "2026-10-02T17:00:00",
-  "AUDCHF": "2026-10-02T17:00:00",
-  "AUDNZD": "2026-10-02T17:00:00",
-  "CADJPY": "2026-10-02T17:00:00",
-  "CADCHF": "2026-10-02T17:00:00",
-  "CHFJPY": "2026-10-02T17:00:00",
-  "NZDJPY": "2026-10-02T17:00:00",
-  "NZDCAD": "2026-10-02T17:00:00",
-  "NZDCHF": "2026-10-02T17:00:00"
+  "NZDUSD": "2026-10-02T21:00:00",
+  "EURJPY": "2026-10-02T21:00:00",
+  "GBPJPY": "2026-10-02T21:00:00",
+  "BTCUSD": "2026-10-02T21:00:00",
+  "ETHUSD": "2026-10-02T21:00:00",
+  "EURGBP": "2026-10-02T21:00:00",
+  "EURAUD": "2026-10-02T21:00:00",
+  "EURCAD": "2026-10-02T21:00:00",
+  "EURCHF": "2026-10-02T21:00:00",
+  "EURNZD": "2026-10-02T21:00:00",
+  "GBPAUD": "2026-10-02T21:00:00",
+  "GBPCAD": "2026-10-02T21:00:00",
+  "GBPCHF": "2026-10-02T21:00:00",
+  "GBPNZD": "2026-10-02T21:00:00",
+  "AUDJPY": "2026-10-02T21:00:00",
+  "AUDCAD": "2026-10-02T21:00:00",
+  "AUDCHF": "2026-10-02T21:00:00",
+  "AUDNZD": "2026-10-02T21:00:00",
+  "CADJPY": "2026-10-02T21:00:00",
+  "CADCHF": "2026-10-02T21:00:00",
+  "CHFJPY": "2026-10-02T21:00:00",
+  "NZDJPY": "2026-10-02T21:00:00",
+  "NZDCAD": "2026-10-02T21:00:00",
+  "NZDCHF": "2026-10-02T21:00:00"
  },
  "next_check": {
-  "EURUSD": "2026-10-03T01:01:00",
-  "GBPUSD": "2026-10-03T01:01:00",
-  "USDJPY": "2026-10-03T01:01:00",
-  "AUDUSD": "2026-10-03T01:01:00",
-  "USDCAD": "2026-10-03T01:01:00",
-  "USDCHF": "2026-10-03T01:01:00",
-  "NZDUSD": "2026-10-03T01:01:00",
-  "EURJPY": "2026-10-03T01:01:00",
-  "GBPJPY": "2026-10-03T01:01:00",
-  "BTCUSD": "2026-10-03T01:01:00",
-  "ETHUSD": "2026-10-03T01:01:00",
-  "EURGBP": "2026-10-03T01:01:00",
-  "EURAUD": "2026-10-03T01:01:00",
-  "EURCAD": "2026-10-03T01:01:00",
-  "EURCHF": "2026-10-03T01:01:00",
-  "EURNZD": "2026-10-03T01:01:00",
-  "GBPAUD": "2026-10-03T01:01:00",
-  "GBPCAD": "2026-10-03T01:01:00",
-  "GBPCHF": "2026-10-03T01:01:00",
-  "GBPNZD": "2026-10-03T01:01:00",
-  "AUDJPY": "2026-10-03T01:01:00",
-  "AUDCAD": "2026-10-03T01:01:00",
-  "AUDCHF": "2026-10-03T01:01:00",
-  "AUDNZD": "2026-10-03T01:01:00",
-  "CADJPY": "2026-10-03T01:01:00",
-  "CADCHF": "2026-10-03T01:01:00",
-  "CHFJPY": "2026-10-03T01:01:00",
-  "NZDJPY": "2026-10-03T01:01:00",
-  "NZDCAD": "2026-10-03T01:01:00",
-  "NZDCHF": "2026-10-03T01:01:00"
+  "EURUSD": "2026-10-03T05:01:00",
+  "GBPUSD": "2026-10-03T05:01:00",
+  "USDJPY": "2026-10-03T05:01:00",
+  "AUDUSD": "2026-10-03T05:01:00",
+  "USDCAD": "2026-10-03T05:01:00",
+  "USDCHF": "2026-10-03T01:15:26.488061",
+  "NZDUSD": "2026-10-03T05:01:00",
+  "EURJPY": "2026-10-03T05:01:00",
+  "GBPJPY": "2026-10-03T05:01:00",
+  "BTCUSD": "2026-10-03T05:01:00",
+  "ETHUSD": "2026-10-03T05:01:00",
+  "EURGBP": "2026-10-03T05:01:00",
+  "EURAUD": "2026-10-03T05:01:00",
+  "EURCAD": "2026-10-03T05:01:00",
+  "EURCHF": "2026-10-03T05:01:00",
+  "EURNZD": "2026-10-03T05:01:00",
+  "GBPAUD": "2026-10-03T05:01:00",
+  "GBPCAD": "2026-10-03T05:01:00",
+  "GBPCHF": "2026-10-03T05:01:00",
+  "GBPNZD": "2026-10-03T05:01:00",
+  "AUDJPY": "2026-10-03T05:01:00",
+  "AUDCAD": "2026-10-03T05:01:00",
+  "AUDCHF": "2026-10-03T05:01:00",
+  "AUDNZD": "2026-10-03T05:01:00",
+  "CADJPY": "2026-10-03T05:01:00",
+  "CADCHF": "2026-10-03T05:01:00",
+  "CHFJPY": "2026-10-03T05:01:00",
+  "NZDJPY": "2026-10-03T05:01:00",
+  "NZDCAD": "2026-10-03T05:01:00",
+  "NZDCHF": "2026-10-03T05:01:00"
  },
  "per_day": {
   "2026-09-28": 1,
@@ -109,7 +109,13 @@
  "data_fail_runs": 0,
  "outage_alerted": false,
  "watch": {
-  "EURGBP": null,
+  "EURGBP": {
+   "symbol": "EURGBP",
+   "display": "EURGBP",
+   "kind": "FVG",
+   "dir": -1,
+   "dist_atr": 0.09
+  },
   "EURAUD": null,
   "EURCAD": null,
   "EURCHF": null,
@@ -118,7 +124,7 @@
    "display": "EURNZD",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.94
+   "dist_atr": 0.67
   },
   "GBPAUD": null,
   "GBPCAD": {
@@ -126,14 +132,14 @@
    "display": "GBPCAD",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.29
+   "dist_atr": 0.38
   },
   "GBPCHF": {
    "symbol": "GBPCHF",
    "display": "GBPCHF",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.19
+   "dist_atr": 0.29
   },
   "GBPNZD": null,
   "AUDJPY": null,
@@ -142,16 +148,22 @@
    "display": "AUDCAD",
    "kind": "FVG",
    "dir": 1,
-   "dist_atr": 0.4
+   "dist_atr": 0.1
   },
   "AUDCHF": null,
-  "AUDNZD": null,
+  "AUDNZD": {
+   "symbol": "AUDNZD",
+   "display": "AUDNZD",
+   "kind": "OB",
+   "dir": 1,
+   "dist_atr": 0.89
+  },
   "CADJPY": {
    "symbol": "CADJPY",
    "display": "CADJPY",
    "kind": "FVG",
    "dir": -1,
-   "dist_atr": 0.14
+   "dist_atr": 0.01
   },
   "CADCHF": null,
   "CHFJPY": {
@@ -159,7 +171,7 @@
    "display": "CHFJPY",
    "kind": "FVG",
    "dir": -1,
-   "dist_atr": 0.93
+   "dist_atr": 0.85
   },
   "NZDJPY": null,
   "NZDCAD": {
@@ -167,7 +179,7 @@
    "display": "NZDCAD",
    "kind": "OB",
    "dir": -1,
-   "dist_atr": 0.29
+   "dist_atr": 0.0
   },
   "NZDCHF": null,
   "BTCUSD": {
@@ -175,14 +187,14 @@
    "display": "BTCUSD",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.05
+   "dist_atr": 0.25
   },
   "ETHUSD": {
    "symbol": "ETHUSD",
    "display": "ETHUSD",
    "kind": "OB",
    "dir": 1,
-   "dist_atr": 0.0
+   "dist_atr": 0.09
   },
   "EURUSD": {
    "symbol": "EURUSD",
@@ -192,7 +204,13 @@
    "dist_atr": 0.0
   },
   "GBPUSD": null,
-  "USDJPY": null,
+  "USDJPY": {
+   "symbol": "USDJPY",
+   "display": "USDJPY",
+   "kind": "OB",
+   "dir": 1,
+   "dist_atr": 0.11
+  },
   "AUDUSD": null,
   "USDCAD": null,
   "USDCHF": {
@@ -207,14 +225,14 @@
    "display": "NZDUSD",
    "kind": "FVG",
    "dir": -1,
-   "dist_atr": 0.52
+   "dist_atr": 0.16
   },
   "EURJPY": {
    "symbol": "EURJPY",
    "display": "EURJPY",
    "kind": "FVG",
    "dir": -1,
-   "dist_atr": 0.26
+   "dist_atr": 0.27
   },
   "GBPJPY": null
  },
