@@ -34,8 +34,8 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
       NEWS_DATA_DIR: ${{ github.workspace }}/newsdata
-      NEWS_CACHE_FILE: ${{ runner.temp }}/news_cache.json
-      NEWS_POSTED_FLAG: ${{ runner.temp }}/news_posted.flag
+      NEWS_CACHE_FILE: /tmp/news_cache.json
+      NEWS_POSTED_FLAG: /tmp/news_posted.flag
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       NEWS_CHAT_ID: ${{ secrets.NEWS_CHAT_ID }}
