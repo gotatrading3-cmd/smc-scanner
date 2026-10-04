@@ -11,8 +11,8 @@
   "NZDUSD": "2026-10-02T21:00:00",
   "EURJPY": "2026-10-02T21:00:00",
   "GBPJPY": "2026-10-02T21:00:00",
-  "BTCUSD": "2026-10-04T01:00:00",
-  "ETHUSD": "2026-10-04T01:00:00",
+  "BTCUSD": "2026-10-04T05:00:00",
+  "ETHUSD": "2026-10-04T05:00:00",
   "EURGBP": "2026-10-02T21:00:00",
   "EURAUD": "2026-10-02T21:00:00",
   "EURCAD": "2026-10-02T21:00:00",
@@ -43,8 +43,8 @@
   "NZDUSD": "2026-10-04T09:03:20.254590",
   "EURJPY": "2026-10-04T09:03:20.254590",
   "GBPJPY": "2026-10-04T09:03:20.254590",
-  "BTCUSD": "2026-10-04T09:01:00",
-  "ETHUSD": "2026-10-04T09:01:00",
+  "BTCUSD": "2026-10-04T13:01:00",
+  "ETHUSD": "2026-10-04T13:01:00",
   "EURGBP": "2026-10-04T09:03:20.254590",
   "EURAUD": "2026-10-04T09:03:20.254590",
   "EURCAD": "2026-10-04T09:03:20.254590",
@@ -182,20 +182,8 @@
    "dist_atr": 0.0
   },
   "NZDCHF": null,
-  "BTCUSD": {
-   "symbol": "BTCUSD",
-   "display": "BTCUSD",
-   "kind": "OB",
-   "dir": 1,
-   "dist_atr": 0.59
-  },
-  "ETHUSD": {
-   "symbol": "ETHUSD",
-   "display": "ETHUSD",
-   "kind": "OB",
-   "dir": 1,
-   "dist_atr": 0.72
-  },
+  "BTCUSD": null,
+  "ETHUSD": null,
   "EURUSD": {
    "symbol": "EURUSD",
    "display": "EURUSD",
@@ -238,7 +226,7 @@
  },
  "copy_idx": {
   "evening_none": 1,
-  "edu": 12,
+  "edu": 13,
   "sat": 2,
   "crypto": 3,
   "ranking": 2,
