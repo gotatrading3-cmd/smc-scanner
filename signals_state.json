@@ -232,9 +232,9 @@
  },
  "copy_idx": {
   "evening_none": 1,
-  "edu": 10,
+  "edu": 11,
   "sat": 2,
-  "crypto": 3,
+  "crypto": 1,
   "ranking": 2,
   "morning": 2,
   "scan": 3,
