@@ -64,3 +64,6 @@ mt5_bridge_status.json
 # Bot d actualites : etat et cache locaux (en ligne, l etat vit sur la branche news-data)
 news_state_local/
 news_cache_local.json
+
+# Modeles de traduction telecharges (~235 Mo) : jamais dans le depot, mis en cache par le workflow
+news_models/

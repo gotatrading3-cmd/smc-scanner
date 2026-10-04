@@ -7,6 +7,8 @@ name: GOTA Actus
 # puis il relance le job suivant. Un filet de securite (cron) relance la chaine si elle s'arrete.
 # Arret : variable NEWS_STOP=true, ou annuler l'execution en cours dans l'onglet Actions.
 # Publication reelle dans le canal : variable NEWS_LIVE=true (sinon : apercu dans le chat prive du proprietaire).
+# Le canal est en francais et sans aucun lien : les sources anglaises sont traduites par un modele libre (OPUS-MT, CC-BY 4.0)
+# telecharge une fois puis garde en cache (news_models).
 
 on:
   workflow_dispatch:
@@ -40,6 +42,7 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       NEWS_CHAT_ID: ${{ secrets.NEWS_CHAT_ID }}
       NEWS_LIVE: ${{ vars.NEWS_LIVE }}
+      NEWS_MODELS_DIR: ${{ github.workspace }}/news_models
       NEWS_MAX_PER_HOUR: ${{ vars.NEWS_MAX_PER_HOUR }}
       NEWS_MAX_PER_CYCLE: ${{ vars.NEWS_MAX_PER_CYCLE }}
     steps:
@@ -58,6 +61,17 @@ jobs:
           cache-dependency-path: requirements-news.txt
 
       - run: pip install -r requirements-news.txt
+
+      - name: "Modele de traduction (garde en cache apres le premier telechargement)"
+        uses: actions/cache@v4
+        with:
+          path: news_models
+          key: news-models-opus-tc-big-en-fr-v1
+
+      - name: "Telecharger le modele de traduction s'il manque"
+        run: |
+          # sans modele, les articles anglais sont simplement ignores (le canal reste 100 % francais)
+          python news_translate.py --ensure || echo "modele de traduction indisponible pour le moment"
 
       - name: Boucle (un cycle par minute)
         env:
