@@ -1,0 +1,105 @@
+name: GOTA Actus
+
+# Le bot d'actualites du canal "Info du monde" tourne EN CONTINU chez GitHub, PC eteint.
+# Meme principe que "GOTA Continu" (robot de signaux) mais totalement SEPARE : autre chaine, autre groupe de
+# concurrence, autre branche d'etat (news-data) -> il ne peut pas perturber le robot de signaux.
+# Un job dure ~5 h 40 : un cycle toutes les 60 secondes (lecture des flux, publication des nouveautes, calendrier),
+# puis il relance le job suivant. Un filet de securite (cron) relance la chaine si elle s'arrete.
+# Arret : variable NEWS_STOP=true, ou annuler l'execution en cours dans l'onglet Actions.
+# Publication reelle dans le canal : variable NEWS_LIVE=true (sinon : apercu dans le chat prive du proprietaire).
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Duree de ce job en minutes (defaut 340)"
+        type: string
+        default: "340"
+  schedule:
+    - cron: "41 */3 * * *"
+
+concurrency:
+  group: gota-news-chain
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  actus:
+    if: ${{ vars.NEWS_STOP != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      PYTHONIOENCODING: utf-8
+      NEWS_DATA_DIR: ${{ github.workspace }}/newsdata
+      NEWS_CACHE_FILE: ${{ runner.temp }}/news_cache.json
+      NEWS_POSTED_FLAG: ${{ runner.temp }}/news_posted.flag
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      NEWS_CHAT_ID: ${{ secrets.NEWS_CHAT_ID }}
+      NEWS_LIVE: ${{ vars.NEWS_LIVE }}
+      NEWS_MAX_PER_HOUR: ${{ vars.NEWS_MAX_PER_HOUR }}
+      NEWS_MAX_PER_CYCLE: ${{ vars.NEWS_MAX_PER_CYCLE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Etat (branche news-data = articles deja postes, evenements deja annonces)"
+        uses: actions/checkout@v4
+        with:
+          ref: news-data
+          path: newsdata
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-news.txt
+
+      - run: pip install -r requirements-news.txt
+
+      - name: Boucle (un cycle par minute)
+        env:
+          MINUTES: ${{ github.event.inputs.minutes || '340' }}
+        run: |
+          git -C newsdata config user.name "gota-news[bot]"
+          git -C newsdata config user.email "gota-news@users.noreply.github.com"
+
+          save_state() {
+            # une seule validation sur la branche (historique inutile ici) : on la reecrit a chaque sauvegarde
+            ( cd newsdata
+              git add -A
+              if ! git diff --cached --quiet; then
+                git commit -q --amend -m "etat actus $(date -u +%Y-%m-%dT%H:%MZ)"
+                for I in 1 2 3; do
+                  if git push -q --force origin news-data; then break; fi
+                  sleep 3
+                done
+              fi )
+          }
+
+          END=$(( $(date +%s) + MINUTES * 60 ))
+          LAST_SAVE=$(date +%s)
+          N=0
+          while [ "$(date +%s)" -lt "$END" ]; do
+            T0=$(date +%s)
+            N=$((N + 1))
+            timeout 90 python news_runner.py --once || echo "cycle $N : erreur ou delai depasse"
+            # on enregistre l'etat des qu'un message est parti (jamais de doublon apres un incident), sinon toutes les 10 min
+            if [ -f "$NEWS_POSTED_FLAG" ] || [ $(( $(date +%s) - LAST_SAVE )) -ge 600 ]; then
+              rm -f "$NEWS_POSTED_FLAG"
+              save_state || echo "sauvegarde de l'etat impossible ce coup-ci (on continue)"
+              LAST_SAVE=$(date +%s)
+            fi
+            WAIT=$(( T0 + 60 - $(date +%s) ))
+            if [ "$WAIT" -gt 0 ]; then sleep "$WAIT"; fi
+          done
+          save_state || echo "sauvegarde finale de l'etat impossible"
+          echo "Fin de la boucle apres $N cycles"
+
+      - name: Relancer la chaine (job suivant)
+        if: ${{ !cancelled() && vars.NEWS_STOP != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run news.yml --repo "$GITHUB_REPOSITORY"

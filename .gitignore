@@ -60,3 +60,7 @@ mt5_bridge_ledger.json
 signal_dashboard.lock
 gota_app.lock
 mt5_bridge_status.json
+
+# Bot d actualites : etat et cache locaux (en ligne, l etat vit sur la branche news-data)
+news_state_local/
+news_cache_local.json
