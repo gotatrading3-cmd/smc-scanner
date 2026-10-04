@@ -75,6 +75,9 @@ BOOTSTRAP = int(os.environ.get("NEWS_BOOTSTRAP") or 4)              # articles p
 DEFAULT_MAX_AGE_H = 4
 SEND_PAUSE = 1.6                                                     # secondes entre 2 envois (limite Telegram ~20/min)
 CAPTION_MAX = 1000                                                   # Telegram : 1024 caracteres au plus pour la legende d'une photo
+# Verrou de destination : en mode reel, le bot n'ecrit QUE dans le canal "Info du monde" - jamais dans les groupes de signaux,
+# jamais ailleurs - meme si un secret etait mal renseigne. Pour changer de canal : modifier cette valeur (ou NEWS_ALLOWED_CHATS).
+ALLOWED_CHATS = {c.strip() for c in (os.environ.get("NEWS_ALLOWED_CHATS") or "-1004150793472").split(",") if c.strip()}
 MIN_IMG_BYTES, MAX_IMG_BYTES = 6_000, 8_000_000
 MIN_IMG_W, MIN_IMG_H = 300, 160                                      # en dessous : vignette / logo, pas une vraie image
 
@@ -492,6 +495,7 @@ class Telegram:
             except Exception:
                 pass
         self.force_preview = False
+        self.blocked = False                                     # vrai si le verrou de destination a refuse un envoi
         self.last_id: Optional[int] = None
 
     @property
@@ -505,6 +509,10 @@ class Telegram:
     def _call(self, method: str, payload: dict, field: str, files: Optional[dict] = None) -> Tuple[bool, str]:
         """(ok, erreur) ; erreur in {"", "photo" (image refusee), "fatal", "transient"}."""
         if not self.token or not self.target:
+            return False, "fatal"
+        if self.to_channel and self.target not in ALLOWED_CHATS:
+            self.blocked = True
+            log("[TG] VERROU : la destination configuree n'est pas 'Info du monde', rien n'est envoye")
             return False, "fatal"
         payload["chat_id"] = self.target
         payload[field] = no_links(payload[field])                  # dernier filet : aucun lien ne part, quoi qu'il arrive
@@ -802,8 +810,12 @@ def run_cycle(tg: Telegram, dry: bool = False, preview_n: int = 0) -> None:
 
     if fatal and not dry and not preview_n and nowt - state.get("notified", 0) > 6 * 3600:
         state["notified"] = nowt
-        tg.notify_owner("⚠️ <b>Bot d'actualités</b> : impossible de publier dans le canal (droits de l'administrateur ? bot retiré ?). "
-                        "Vérifie que le bot est administrateur avec le droit de publier.")
+        if tg.blocked:
+            tg.notify_owner("🔒 <b>Bot d'actualités</b> : le verrou de sécurité a refusé d'écrire, car la destination configurée n'est pas "
+                            "« Info du monde ». Rien n'a été envoyé.")
+        else:
+            tg.notify_owner("⚠️ <b>Bot d'actualités</b> : impossible de publier dans le canal (droits de l'administrateur ? bot retiré ?). "
+                            "Vérifie que le bot est administrateur avec le droit de publier.")
 
     # menage de l'etat
     cutoff = nowt - 4 * 86400
