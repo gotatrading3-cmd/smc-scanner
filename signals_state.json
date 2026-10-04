@@ -226,9 +226,9 @@
  },
  "copy_idx": {
   "evening_none": 1,
-  "edu": 6,
+  "edu": 7,
   "sat": 2,
-  "crypto": 3,
+  "crypto": 1,
   "ranking": 2,
   "morning": 2,
   "scan": 3,
