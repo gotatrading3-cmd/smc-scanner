@@ -246,6 +246,17 @@ class Publisher:
             return
         for upd in j.get("result", []):
             st["tg_update_offset"] = upd["update_id"] + 1
+            mcm = upd.get("my_chat_member") or {}                  # le PROPRIETAIRE vient d'ajouter / promouvoir le bot dans un groupe
+            if mcm and str((mcm.get("from") or {}).get("id", "")) == str(self.owner_chat):
+                chat, new = mcm.get("chat") or {}, mcm.get("new_chat_member") or {}
+                if chat.get("type") in ("group", "supergroup", "channel") and new.get("status") in ("administrator", "member"):
+                    st["added_chat"] = {"id": chat.get("id"), "title": chat.get("title", ""), "type": chat.get("type"),
+                                        "status": new.get("status"), "date": mcm.get("date")}
+                    try:
+                        self.notify_owner(f"✅ Le bot a été ajouté à « {html.escape(str(chat.get('title', '')))} » "
+                                          f"(statut : {new.get('status')}). Il n'écrira dans un groupe que si je l'y configure.")
+                    except Exception:
+                        pass
             msg = upd.get("message") or {}
             chat_id = str((msg.get("chat") or {}).get("id", ""))
             text = (msg.get("text") or "").strip().lstrip("/").lower()

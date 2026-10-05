@@ -264,7 +264,10 @@ DUKA_URL = "https://datafeed.dukascopy.com/datafeed/{pair}/{y}/{m:02d}/{d:02d}/{
 BASIS_BACKFILL_DAYS = 30
 BASIS_REQUESTS_PER_CALL = 8          # requetes reseau max par instrument et par appel (le rattrapage se fait sur quelques cycles)
 BASIS_MAX_STALE_H = 72               # sans ecart recent (source HS), l'instrument est ignore plutot que publie avec un decalage inconnu
+BASIS_TIME_BUDGET_S = 25.0           # temps reseau max par passage et par instrument : une panne de la source ne doit jamais bloquer les scans
 _BASIS: Optional[dict] = None
+_BASIS_DONE: set = set()             # un seul rattrapage par instrument et par passage (un passage = un cycle de 5 min)
+_DUKA_FAILS = 0                      # pannes consecutives de la source dans ce passage : au bout de 2 on n'insiste plus
 
 
 def _basis_all() -> dict:
@@ -289,15 +292,19 @@ def _basis_save() -> None:
 
 def _duka_last_bid(pair: str, hour: pd.Timestamp) -> Optional[float]:
     """Dernier cours acheteur (bid) CFD de l'heure UTC commencant a `hour` ; None si pas de ticks (marche ferme) ou source indisponible."""
+    global _DUKA_FAILS
     import requests
+    if _DUKA_FAILS >= 2:
+        return None
     url = DUKA_URL.format(pair=pair, y=hour.year, m=hour.month - 1, d=hour.day, h=hour.hour)
-    for k in range(3):
+    for k in range(2):
         try:
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (GOTA signals)"}, timeout=25)
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (GOTA signals)"}, timeout=15)
         except Exception:
-            time.sleep(2 * (k + 1))
+            time.sleep(1)
             continue
         if r.status_code == 200:
+            _DUKA_FAILS = 0
             try:
                 raw = lzma.decompress(r.content) if r.content else b""
             except Exception:
@@ -308,17 +315,23 @@ def _duka_last_bid(pair: str, hour: pd.Timestamp) -> Optional[float]:
             _ms, _ask, bid, _av, _bv = struct.unpack(">IIIff", raw[(n - 1) * 20:n * 20])
             return bid / 1000.0
         if r.status_code in (403, 404):
-            return None
-        time.sleep(2 * (k + 1))                                   # 503 / 429 : on reessaie
+            _DUKA_FAILS = 0
+            return None                                           # pas de ticks cette heure-la (marche ferme)
+        time.sleep(1)                                             # 503 / 429 : un seul nouvel essai
+    _DUKA_FAILS += 1
     return None
 
 
 def _update_basis(sid: str) -> None:
     """Complete le cache d'ecarts de `sid` : derniere heure complete, puis rattrapage progressif des jours passes."""
+    if sid in _BASIS_DONE:
+        return
+    _BASIS_DONE.add(sid)
     cfg = UNIVERSE[sid]
     fut = _yf_fetch(cfg["yahoo"], "1h", "730d")
     if fut is None or len(fut) == 0:
         return
+    t_start = time.time()
     store = _basis_all().setdefault(sid, {})
     now = utc_now()
     wanted = [(now - pd.Timedelta(minutes=75)).floor("h")]        # derniere heure complete (Dukascopy publie avec un peu de retard)
@@ -331,7 +344,7 @@ def _update_basis(sid: str) -> None:
         key = h.strftime("%Y-%m-%dT%H")
         if key in store or h not in fut.index:
             continue
-        if tried >= BASIS_REQUESTS_PER_CALL:
+        if tried >= BASIS_REQUESTS_PER_CALL or time.time() - t_start > BASIS_TIME_BUDGET_S or _DUKA_FAILS >= 2:
             break
         tried += 1
         bid = _duka_last_bid(cfg["anchor"], h)

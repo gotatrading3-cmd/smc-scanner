@@ -38,8 +38,11 @@ jobs:
               t0 = time.time()
               anchored = bool(sd.UNIVERSE[sid].get("anchor"))
               if anchored:
-                  for _ in range(6):                                  # rattrapage des ecarts passes (quelques requetes a la fois)
+                  for k in range(4):                                  # rattrapage des ecarts passes (quelques requetes a la fois)
+                      t1 = time.time()
+                      sd._BASIS_DONE.discard(sid)
                       sd._update_basis(sid)
+                      print(f"[{sid}] rattrapage {k + 1}/4 : {len(sd._basis_all().get(sid, {}))} echantillons, {time.time() - t1:.0f}s, pannes source={sd._DUKA_FAILS}", flush=True)
                   store = sd._basis_all().get(sid, {})
                   ks = sorted(store)
                   print(f"[{sid}] ecarts CFD-contrat a terme : {len(ks)} echantillons | derniers : {[(k, store[k]) for k in ks[-3:]]}")
