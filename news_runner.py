@@ -69,9 +69,10 @@ STATE_FILE = DATA_DIR / "news_state.json"
 CACHE_FILE = Path(os.environ.get("NEWS_CACHE_FILE") or (DIR / "news_cache_local.json"))
 UA = "GOTA-NewsBot/1.0 (+https://github.com/gotatrading3-cmd/smc-scanner)"
 
-MAX_PER_CYCLE = int(os.environ.get("NEWS_MAX_PER_CYCLE") or 10)     # envois max par cycle (le reste passe au cycle suivant)
-MAX_PER_HOUR = int(os.environ.get("NEWS_MAX_PER_HOUR") or 20)       # au-dela : seuls breaking / chiffres / banques centrales passent ; le reste attend l'heure suivante
+MAX_PER_CYCLE = int(os.environ.get("NEWS_MAX_PER_CYCLE") or 4)      # envois max par cycle d'une minute (le reste passe au cycle suivant)
+MAX_PER_HOUR = int(os.environ.get("NEWS_MAX_PER_HOUR") or 10)       # quota horaire, reparti regulierement ; seuls breaking / chiffres / banques centrales peuvent le depasser
 BOOTSTRAP = int(os.environ.get("NEWS_BOOTSTRAP") or 4)              # articles postes au tout premier lancement d'une source
+MAX_PER_SOURCE_HOUR = int(os.environ.get("NEWS_MAX_PER_SOURCE_HOUR") or 3)   # variete : une source ne peut pas occuper tout le quota
 DEFAULT_MAX_AGE_H = 4
 SEND_PAUSE = 1.6                                                     # secondes entre 2 envois (limite Telegram ~20/min)
 CAPTION_MAX = 1000                                                   # Telegram : 1024 caracteres au plus pour la legende d'une photo
@@ -81,38 +82,62 @@ ALLOWED_CHATS = {c.strip() for c in (os.environ.get("NEWS_ALLOWED_CHATS") or "-1
 MIN_IMG_BYTES, MAX_IMG_BYTES = 6_000, 8_000_000
 MIN_IMG_W, MIN_IMG_H = 300, 160                                      # en dessous : vignette / logo, pas une vraie image
 
-# Sujets financiers (francais + anglais) : sert de filtre pour les medias generalistes ("include": "__FINANCE__").
-FINANCE_RE = re.compile(
-    r"(?i)\b(?:"
-    r"bours\w*|cac ?40|sbf ?120|dax|euro ?stoxx|stoxx|ftse|dow jones|nasdaq|s&p ?(?:500|global)?|nikkei|hang seng|wall street|russell|"
-    r"march[eé]s? (?:financiers?|actions|boursiers?|obligataires?|des changes|des capitaux|europ[eé]ens?|asiatiques?|am[eé]ricains?|mondiaux)|"
-    r"trading|traders?|investisseurs?|actionnaires?|cotation|introduction en bourse|ipo|opa|capitalisation|"
-    r"actions (?:am[eé]ricaines?|europ[eé]ennes?|chinoises?|japonaises?|technologiques?|bancaires?|cot[eé]es?)|"
-    r"valeurs? (?:bancaires?|technologiques?|cot[eé]es?)|"
-    r"taux (?:directeurs?|d['’]int[eé]r[eê]ts?|de change|hypoth[eé]caires?|obligataires?|d['’]emprunt)|politique mon[eé]taire|"
-    r"rendements? (?:obligataires?|des obligations|des bons)|bunds?|oat|bons du tr[eé]sor|spreads?|"
-    r"banques? centrales?|bce|fed|r[eé]serve f[eé]d[eé]rale|boj|banque du japon|banque d['’]angleterre|banque de france|lagarde|powell|"
-    r"inflation|d[eé]sinflation|d[eé]flation|stagflation|pib|r[eé]cession|croissance (?:[eé]conomique|mondiale|am[eé]ricaine|europ[eé]enne|chinoise|fran[cç]aise)|"
-    r"ch[oô]mage|cr[eé]ations? d['’]emplois?|emplois non agricoles|nfp|payrolls?|pmi|ism|"
-    r"indice des prix|prix [àa] la consommation|prix [àa] la production|ipc|production industrielle|ventes au d[eé]tail|"
-    r"balance commerciale|d[eé]ficit (?:public|commercial|budg[eé]taire)|dette (?:publique|souveraine)|agences? de notation|moody['’]?s|fitch|"
-    r"fmi|ocde|banque mondiale|eurogroupe|droits? de douane|tarifs? douaniers?|guerre commerciale|"
-    r"devises?|forex|dollar|euro|yen|livre sterling|franc suisse|eur/usd|usd/jpy|gbp/usd|yuan|"
-    r"l['’]or|once d['’]or|p[eé]trole|baril\w*|brent|wti|opep\w*|opec\w*|gaz naturel|mati[eè]res premi[eè]res|cuivre|lithium|uranium|"
-    r"bitcoin|btc|ethereum|[eé]ther|crypto\w*|stablecoins?|altcoins?|blockchain|binance|coinbase|solana|ripple|xrp|halving|etf|"
-    r"r[eé]sultats? (?:trimestriels?|annuels?|semestriels?|financiers?)|b[eé]n[eé]fices?|chiffre d['’]affaires|dividendes?|"
-    r"rachats? d['’]actions|fusions?[- ]acquisitions?|banques?|assureurs?|hedge funds?|"
-    r"stocks?|shares|equit(?:y|ies)|bonds?|yields?|treasur(?:y|ies)|rate (?:cuts?|hikes?|decisions?)|interest rates?|central banks?|"
-    r"fomc|ecb|boe|cpi|ppi|pce|gdp|nonfarm|non-farm|unemployment|jobless|jobs report|tariffs?|trade war|earnings|profits?|"
-    r"merger|acquisition|currenc(?:y|ies)|sterling|gold|silver|copper|oil|crude|natural gas|commodit(?:y|ies)|futures|volatility|"
-    r"sell-?off|recession|retail sales|hedge fund|lenders?|credit|debt|deficit|imf|world bank"
-    r")\b")
+# Le canal ne garde QUE ce qui peut faire bouger le marche (demande du proprietaire : devises, crypto, finance, pas de surcharge).
+# Un article est publie s'il parle d'au moins un de ces sujets (francais + anglais), juge sur son TITRE.
+_G_TAUX = (r"fed|fomc|bce|ecb|boj|boe|rba|snb|banques? centrales?|banque (?:du japon|d['’]angleterre|du canada|nationale suisse|de france)|"
+           r"r[eé]serve f[eé]d[eé]rale|federal reserve|european central bank|bank of (?:england|japan|canada)|powell|lagarde|bailey|ueda|macklem|bullock|"
+           r"taux directeurs?|taux d['’]int[eé]r[eê]ts?|(?:baisses?|hausses?) des taux|politique mon[eé]taire|rate (?:cuts?|hikes?|decisions?)|interest rates?|"
+           r"monetary policy|rendements? (?:obligataires?|des obligations|des bons|du tr[eé]sor)|(?:bond|treasury|bund|gilt|jgb) yields?|yields?|"
+           r"courbe des taux|yield curve|bunds?|oat|treasur(?:y|ies)|bons du tr[eé]sor")
+_G_MACRO = (r"nfp|non-?farm|payrolls?|emplois non agricoles|cr[eé]ations? d['’]emplois|ch[oô]mage|unemployment|jobless|inflation|d[eé]sinflation|"
+            r"cpi|ipc|ppi|pce|pib|gdp|pmi|ism|jolts|ventes au d[eé]tail|retail sales|balance commerciale|trade balance|production industrielle|"
+            r"industrial production|confiance des (?:consommateurs|m[eé]nages|entreprises)|consumer (?:confidence|sentiment)|business (?:confidence|climate)|"
+            r"ifo|zew|sentix|beige book|r[eé]cession|recession|stagflation|commandes de biens durables|durable goods|jobs report|rapport sur l['’]emploi")
+_G_MARCHES = (r"wall street|s&p ?500|nasdaq|dow jones|us ?30|us ?100|us ?500|nas100|cac ?40|dax|euro ?stoxx|stoxx|ftse|nikkei|hang seng|"
+              r"indices? boursiers?|bourses?|les march[eé]s|march[eé]s? (?:actions|boursiers?|financiers?|europ[eé]ens?|am[eé]ricains?|asiatiques?|mondiaux|obligataires?|des changes)|"
+              r"actions? (?:am[eé]ricaines?|europ[eé]ennes?|asiatiques?|mondiales?|chinoises?|japonaises?|technologiques?)|saison des r[eé]sultats|"
+              r"seuils techniques|analyse technique|grands enjeux de la semaine|week[- ]ahead|vix|volatilit[eé]|krach|sell-?off|contrats? [àa] terme|futures|"
+              r"equities|stock market|stocks? (?:fall|rise|slip|tumble|jump|surge|slide|drop|rally)")
+_G_DEVISES = (r"forex|devises?|dollar(?: am[eé]ricain| canadien| australien| n[eé]o-z[eé]landais)?|euro|yen|livre sterling|sterling|franc suisse|swiss franc|"
+              r"yuan|renminbi|eur/usd|usd/jpy|gbp/usd|usd/chf|aud/usd|usd/cad|nzd/usd|eur/gbp|eur/jpy|gbp/jpy|eur/chf|usd/cnh|dxy|"
+              r"indice dollar|dollar index|currenc(?:y|ies)|pound|loonie|aussie|kiwi")
+_G_MATIERES = (r"l['’]or|once d['’]or|gold|xau|argent[- ]m[eé]tal|silver|xag|p[eé]trole|brent|wti|crude|baril\w*|opep\w*|opec\w*|gaz naturel|natural gas|"
+               r"cuivre|copper|mati[eè]res premi[eè]res|commodit(?:y|ies)|lithium|uranium|\beia\b")
+_G_CRYPTO = (r"bitcoin|btc|ethereum|ether|eth|etf (?:bitcoin|ethereum|spot|crypto|solana|xrp)|stablecoins?|tether|usdt|usdc|binance|coinbase|solana|xrp|ripple|"
+             r"dogecoin|liquidations?|halving|crypto-?monnaies?|cryptomonnaies?|cryptos?|crypto-?currenc(?:y|ies)")
+_G_COMMERCE = r"droits? de douane|tarifs? douaniers?|tariffs?|guerre commerciale|trade war|embargo|shutdown|plafond de la dette|debt ceiling|opep\+?|opec\+?"
+_G_MEGA = (r"apple|nvidia|microsoft|alphabet|google|amazon|meta|tesla|netflix|broadcom|tsmc|asml|jpmorgan|goldman sachs|morgan stanley|bank of america|"
+           r"citigroup|berkshire|exxon|chevron|lvmh|total ?energies|airbus|spacex|openai")
+_G_RESULTATS = r"r[eé]sultats?|earnings|guidance|pr[eé]visions de|chiffre d['’]affaires|b[eé]n[eé]fices?|profits?|revenus?|revenue|ipo|introduction en bourse"
+
+
+def _rx(pat: str) -> "re.Pattern[str]":
+    return re.compile(r"(?i)\b(?:" + pat + r")\b")
+
+
+GROUPES = {"taux": _rx(_G_TAUX), "macro": _rx(_G_MACRO), "marches": _rx(_G_MARCHES), "devises": _rx(_G_DEVISES),
+           "matieres": _rx(_G_MATIERES), "crypto": _rx(_G_CRYPTO), "commerce": _rx(_G_COMMERCE)}
+_MEGA_RE, _RESULTATS_RE = _rx(_G_MEGA), _rx(_G_RESULTATS)
+
+
+def market_groups(title: str) -> List[str]:
+    """Les sujets 'qui font bouger le marche' dont parle ce titre (liste vide = hors sujet, l'article n'est pas publie)."""
+    hit = [k for k, r in GROUPES.items() if r.search(title)]
+    if not hit and _MEGA_RE.search(title) and _RESULTATS_RE.search(title):
+        hit = ["grosses valeurs"]
+    return hit
+
+
 EXCLUDE_RE = re.compile(
     r"(?i)\b(horoscopes?|celebrit\w*|célébrit\w*|nba|nfl|nhl|mlb|premier league|ligue des champions|football|soccer|tennis|"
     r"rugby|formule 1|formula 1|olympi\w*|oscars?|grammys?|recipes?|recettes?|loto|lottery|astrolog\w*|royal family|"
     r"taylor swift|kardashian|m[eé]t[eé]o)\b")
-NOISE_RE = re.compile(r"(?i)^(?:here['’]s the latest|live updates?|latest updates?|watch(?: live)?\b|listen\b|podcast|newsletter|sponsored|advertis\w*)")
-PROMO_RE = re.compile(r"(?i)\b(investingpro|propicks|investing pro|juste valeur|black friday|code promo|offre exclusive|sponsoris[ée]e?s?|publi-?reportage)\b")
+NOISE_RE = re.compile(r"(?i)^(?:here['’]s the latest|live updates?|latest updates?|watch(?: live)?\b|listen\b|podcast|newsletter|sponsored|advertis\w*|"
+                      r"l['’]int[eé]grale\b|on refait la s[eé]ance|replay\b|vid[eé]o\s*:|[eé]dito\b|chronique\b|revue de presse|bfm bourse\s*[-–]|le club\s*:)")
+# annonces de routine sans interet pour le canal (dividendes de fonds, plans d'options, "pourquoi l'action X bouge aujourd'hui")
+ROUTINE_RE = re.compile(r"(?i)(\bdeclares?\b[^.]{0,70}\bdividends?\b|\bd[eé]clare un dividende|attribue (?:des )?options|options d['’]achat [àa] \d+ employ|"
+                        r"^pourquoi l['’]action\b.{0,80}aujourd['’]hui|plan d['’]actionnariat salari[eé])")
+PROMO_RE =re.compile(r"(?i)\b(investingpro|propicks|investing pro|juste valeur|black friday|code promo|offre exclusive|sponsoris[ée]e?s?|publi-?reportage)\b")
 BREAKING_RE = re.compile(r"(?i)\b(breaking|urgent|flash|alerte|just in)\b")
 DATA_RE = re.compile(r"(?i)(\bvs\.?(?=\s)|\bversus\b|\bexpected\b|\bforecasts?\b|\bconsensus\b|\bprev(ious)?\b|\bprior\b|"
                      r"\bprévu\w*|\battendu\w*|\bcontre\b)")
@@ -325,6 +350,7 @@ def normalize_item(feed: dict, raw: dict, now: datetime) -> Optional[dict]:
         ts = now
     summary = clean_summary(raw.get("summary") or raw.get("summary_long"), title, limit=220)
     title, summary = _URL.sub("", title).strip(), _URL.sub("", summary).strip()        # jamais d'adresse dans le texte
+    title = re.sub(r"\s*[>›]+\s*$", "", title)                                          # ">" parasite en fin de titre (flux Le Revenu)
     image = raw.get("image") or html_image((raw.get("summary_long") or "") + " " + (raw.get("summary") or ""), link)
     if image and _IMG_BAD.search(image):
         image = ""
@@ -342,15 +368,26 @@ def accept(it: dict, now: datetime) -> Optional[str]:
         return "old"
     text = f"{it['title']} {it['summary']}"
     inc = f.get("include")
-    if inc and not (FINANCE_RE if inc == "__FINANCE__" else re.compile(inc, re.I)).search(text):
+    if inc and inc != "__FINANCE__":                          # filtre propre a la source (ex. annonces utiles des banques centrales)
+        if not re.compile(inc, re.I).search(text):
+            return "filtered"
+    elif not market_groups(it["title"]):                      # sinon : le canal ne garde que ce qui peut faire bouger le marche
         return "filtered"
     exc = f.get("exclude")
     if exc and re.search(exc, it["title"], re.I):
         return "filtered"
     if (EXCLUDE_RE.search(it["title"]) or NOISE_RE.search(it["title"]) or PROMO_RE.search(it["title"])
-            or len(it["title"].split()) < 3):
+            or ROUTINE_RE.search(it["title"]) or len(it["title"].split()) < 3):
         return "filtered"
     return None
+
+
+def importance(it: dict) -> int:
+    """3 : banques centrales / taux / grands indicateurs ; 2 : marches, devises, matieres premieres, crypto, commerce ; 1 : resultats de grosses valeurs."""
+    g = market_groups(it["title"])
+    if "taux" in g or "macro" in g:
+        return 3
+    return 2 if g and g != ["grosses valeurs"] else 1
 
 
 # ------------------------------------------------------------------------------------------------ traduction
@@ -667,7 +704,7 @@ def run_cycle(tg: Telegram, dry: bool = False, preview_n: int = 0) -> None:
         state["day"], state["count"] = today, 0
     hour = now.strftime("%Y-%m-%dT%H")
     if state.get("hour") != hour:
-        state["hour"], state["hcount"] = hour, 0
+        state["hour"], state["hcount"], state["shcount"] = hour, 0, {}
     live_state = not (dry or preview_n)                                 # n'ecrit l'etat que pour un vrai cycle
 
     items, stats = collect(feeds, cache, now, force=preview_n > 0)
@@ -722,14 +759,17 @@ def run_cycle(tg: Telegram, dry: bool = False, preview_n: int = 0) -> None:
             for u in {i["feed"]["url"] for i in items}:
                 fseeded.setdefault(u, nowt)
 
-    if not preview_n:                                          # trop d'articles : d'abord les prioritaires, puis les plus recents
-        todo.sort(key=lambda i: (not i["notify"], -(i["ts"] or now).timestamp()))
-        chosen, budget = [], max(0, MAX_PER_HOUR - state["hcount"])
+    if not preview_n:                                          # trop d'articles : prioritaires d'abord, puis les plus importants, puis les plus recents
+        # Le quota horaire est REPARTI sur l'heure (1 au debut, MAX_PER_HOUR a la fin) : plus de paquet de 20 messages a HH:00 suivi d'un silence.
+        allowance = min(MAX_PER_HOUR, max(1, int(MAX_PER_HOUR * (now.minute + 4) / 60)))
+        todo.sort(key=lambda i: (not i["notify"], -importance(i), -(i["ts"] or now).timestamp()))
+        chosen, budget, per_src = [], max(0, allowance - state["hcount"]), dict(state.get("shcount", {}))
         for it in todo:
-            if len(chosen) >= MAX_PER_CYCLE + 4:               # petite marge : certains seront ecartes a l'envoi (traduction, doublon)
+            if len(chosen) >= MAX_PER_CYCLE + 3:               # petite marge : certains seront ecartes a l'envoi (traduction, doublon)
                 break
-            if it["notify"] or budget > 0:
+            if it["notify"] or (budget > 0 and per_src.get(it["source"], 0) < MAX_PER_SOURCE_HOUR):
                 chosen.append(it)
+                per_src[it["source"]] = per_src.get(it["source"], 0) + 1
                 budget -= 0 if it["notify"] else 1
         todo = sorted(chosen, key=lambda i: i["ts"] or now)    # et on les publie dans l'ordre chronologique
 
@@ -787,6 +827,8 @@ def run_cycle(tg: Telegram, dry: bool = False, preview_n: int = 0) -> None:
                 titles.append([nowt, ntf])
             state["count"] += 1
             state["hcount"] += 1
+            sh = state.setdefault("shcount", {})
+            sh[it["source"]] = sh.get(it["source"], 0) + 1
             if found and it["tip"]:
                 edu.mark_tip(state, found[0], nowt)
             if img and it.get("img_key"):

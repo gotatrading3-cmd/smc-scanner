@@ -25,6 +25,7 @@ import re
 import sys
 import time
 import unicodedata
+from collections import Counter
 from pathlib import Path
 from typing import List, Optional
 
@@ -130,6 +131,7 @@ PRE = [
     (rf"(?i)\b{_FIG}\s+beat(?:s)?\b", r"stronger-than-expected \1 figures"),
     (r"(?i)\bsoft(?= (?:US |U\.S\. )?(?:jobs?|labou?r|data|payrolls?|retail|cpi|gdp|pmi|reading|economic|hiring|employment))", "weak"),
     (r"(?i)\bFX news wrap\b", "forex market summary"),
+    (r"(?i)\b(European|Asian|Asia-Pacific|US|American|London|New York)\s+(?:trading\s+)?session\s+wrap\b", r"summary of the \1 session"),
     (r"(?i)\bpric(?:e|es|ed|ing)\s+in\b", lambda m: {"price": "anticipate", "prices": "anticipates", "priced": "anticipated",
                                                        "pricing": "anticipating"}[m.group(0).split()[0].lower()]),
     (r"(?i)\bslip(s|ped|ping)?\s+ahead of\b", lambda m: {"": "fall before", "s": "falls before", "ped": "fell before",
@@ -151,6 +153,7 @@ POST = [
     (r"(?i)\b(?:non[- ]farm payrolls?|(?:paies?|salaires?|emplois?) non agricoles?)(?:\s*\(NFP\))?", "emplois non agricoles (NFP)"),
     (r"(?i)\bcryptographiques?\b", "crypto"),
     (r"\bcarry-trade\b", "carry trade"),
+    (r"(?i)\btrillions?\b", "billions"),                    # "trillion" anglais = 10^12 = "billion" francais (sinon faux d'un facteur un million)
     (r"(?i)\s*\bpour cent\b", " %"),
     (r"(?<![\w-])(\d+)\.(\d+)", r"\1,\2"),                 # 0.1 -> 0,1 (decimale francaise ; "GPT-5.1" reste intact)
     (r"\s*⁇\s*", " "),                                # symbole "caractere inconnu" du modele : jamais affiche
@@ -169,12 +172,34 @@ _EN_STOP = {"the", "of", "and", "to", "in", "for", "with", "is", "are", "as", "a
 
 
 _EN_LEAK = {"forecast", "outlook", "price", "prices", "sellers", "buyers", "market", "markets", "weekly", "amid", "says", "said"}
+_NUM = re.compile(r"\d{1,3}(?:[   ,.]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?")
+
+
+def numbers(s: str) -> "Counter[str]":
+    """Les nombres d'un texte, ecrits a l'anglaise ou a la francaise, ramenes a leurs seuls chiffres (58.4 = 58,4 ; 1,200 = 1 200)."""
+    return Counter(re.sub(r"\D", "", m.group(0)) for m in _NUM.finditer(s))
+
+
+def numbers_ok(src: str, out: str) -> bool:
+    """Aucun chiffre ne doit apparaitre ou changer a la traduction (un 58,4 devenu 50,4 serait une fausse information)."""
+    return not (numbers(out) - numbers(src))
+
+
+def scale_ok(src: str, out: str) -> bool:
+    """Ordres de grandeur : 'billion' anglais (10^9) = 'milliard' ; 'billion' francais (10^12) = 'trillion' anglais."""
+    if re.search(r"(?i)\bbillions?\b", src) and not re.search(r"(?i)\btrillions?\b", src) and re.search(r"(?i)\bbillions?\b", out):
+        return False
+    if re.search(r"(?i)\btrillions?\b", src) and re.search(r"(?i)\bmilliards?\b", out) and not re.search(r"(?i)\bmilliards?\b", src):
+        return False
+    return True
 
 
 def good(src: str, out: str) -> bool:
-    """Garde-fou : refuse les traductions vides, restees en anglais, de longueur absurde ou bouclees."""
+    """Garde-fou : refuse les traductions vides, restees en anglais, de longueur absurde, bouclees, aux chiffres ou ordres de grandeur changes."""
     ws, wo = src.split(), out.split()
     if not wo or not out.strip():
+        return False
+    if not numbers_ok(src, out) or not scale_ok(src, out):
         return False
     if not (0.45 <= len(wo) / max(1, len(ws)) <= 2.6):
         return False
