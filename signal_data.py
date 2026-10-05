@@ -5,9 +5,10 @@ signal_data.py - Donnees de marche du systeme de signaux. DEUX backends intercha
   yahoo : Yahoo Finance via yfinance (GitHub Actions / n'importe ou, gratuit, sans cle)
           -> paires forex + crypto (prix spot).
           -> or et indices US : Yahoo ne donne que les CONTRATS A TERME, decales du prix CFD du courtier (environ 35 $ sur l'or,
-             250-300 points sur le US100/US30). On garde leurs bougies (la forme du marche) mais on les RECALE sur le vrai prix
-             CFD de Dukascopy (gratuit, sans cle) : voir _anchor(). Sans ecart recent connu, l'instrument est ignore - jamais
-             de niveaux publies avec un decalage inconnu. Petrole / argent / DAX restent exclus (pas encore recales).
+             250-300 points sur le US100/US30). On garde leurs bougies (la forme du marche) mais on les RECALE sur le vrai prix :
+             indice au comptant de Yahoo pour les indices, prix au comptant en direct (gold-api.com) pour l'or : voir _anchor().
+             Sans ecart recent connu, l'instrument est ignore - jamais de niveaux publies avec un decalage inconnu.
+             Petrole / argent / DAX restent exclus (pas encore recales).
 
 Choix du backend : variable d'environnement SIGNAL_BACKEND (mt5|yahoo). Defaut : mt5 sous Windows,
 yahoo ailleurs. LECTURE SEULE : ce module ne passe JAMAIS d'ordre.
@@ -16,8 +17,6 @@ from __future__ import annotations
 import sys
 import os
 import json
-import lzma
-import struct
 import time
 import subprocess
 from datetime import datetime, timezone
@@ -50,7 +49,7 @@ MT5_EXE_CANDIDATES = [
 BACKEND = (os.environ.get("SIGNAL_BACKEND") or ("mt5" if sys.platform == "win32" else "yahoo")).lower()
 
 # id public -> {mt5: nom MT5, yahoo: ticker Yahoo (None = indisponible), cls: classe d'actif,
-#               anchor: instrument Dukascopy qui donne le prix CFD pour recaler un contrat a terme (voir _anchor)}
+#               anchor: d'ou vient le vrai prix pour recaler un contrat a terme ("cash:<indice>" ou "spot:<metal>", voir _anchor)}
 UNIVERSE: Dict[str, dict] = {
     "EURUSD": dict(mt5="EURUSD", yahoo="EURUSD=X", cls="fx"),
     "GBPUSD": dict(mt5="GBPUSD", yahoo="GBPUSD=X", cls="fx"),
@@ -61,11 +60,11 @@ UNIVERSE: Dict[str, dict] = {
     "NZDUSD": dict(mt5="NZDUSD", yahoo="NZDUSD=X", cls="fx"),
     "EURJPY": dict(mt5="EURJPY", yahoo="EURJPY=X", cls="fx"),
     "GBPJPY": dict(mt5="GBPJPY", yahoo="GBPJPY=X", cls="fx"),
-    "XAUUSD": dict(mt5="GOLD", yahoo="GC=F", cls="metal", anchor="XAUUSD"),
+    "XAUUSD": dict(mt5="GOLD", yahoo="GC=F", cls="metal", anchor="spot:XAU"),
     "XAGUSD": dict(mt5="SILVER", yahoo=None, cls="metal"),
-    "US100": dict(mt5="US100Cash", yahoo="NQ=F", cls="index", anchor="USATECHIDXUSD"),
-    "US30": dict(mt5="US30Cash", yahoo="YM=F", cls="index", anchor="USA30IDXUSD"),
-    "US500": dict(mt5="US500Cash", yahoo="ES=F", cls="index", anchor="USA500IDXUSD"),
+    "US100": dict(mt5="US100Cash", yahoo="NQ=F", cls="index", anchor="cash:^NDX"),
+    "US30": dict(mt5="US30Cash", yahoo="YM=F", cls="index", anchor="cash:^DJI"),
+    "US500": dict(mt5="US500Cash", yahoo="ES=F", cls="index", anchor="cash:^GSPC"),
     "GER40": dict(mt5="GER40Cash", yahoo=None, cls="index"),
     "BTCUSD": dict(mt5="BTCUSD", yahoo="BTC-USD", cls="crypto"),
     "ETHUSD": dict(mt5="ETHUSD", yahoo="ETH-USD", cls="crypto"),
@@ -255,19 +254,19 @@ def _resample(h1: pd.DataFrame, minutes: int) -> pd.DataFrame:
     return agg.dropna(subset=["open", "close"])
 
 
-# ---- recalage des contrats a terme (or, indices US) sur le prix CFD -------------------------------------------------------------
-# Ecart = (dernier cours acheteur CFD de l'heure, Dukascopy) - (cloture de la barre horaire du contrat a terme). Mesure une fois par
-# heure (+ un point par jour ouvre a 15 h UTC pour les 30 derniers jours) et gardee dans basis_cache.json (branche data en ligne).
-# Chaque echantillon, une fois ecrit, ne change plus : l'historique recale est stable d'un cycle a l'autre.
+# ---- recalage des contrats a terme (or, indices US) sur le prix du courtier --------------------------------------------------------
+# Yahoo ne donne que des CONTRATS A TERME, decales du prix du courtier (~35 $ sur l'or, 250-300 points sur les indices US). On garde leurs
+# bougies (la forme du marche) mais on les decale de l'ECART mesure entre le vrai prix et le contrat a terme :
+#   - indices ("cash:^NDX") : Yahoo donne aussi l'indice au comptant pendant la seance US ; ecart = indice - contrat, bougies de 5 minutes
+#     alignees, mediane par heure ; hors seance on garde le dernier ecart connu (c'est ce que font les courtiers pour leurs CFD) ;
+#   - or ("spot:XAU") : prix au comptant en direct (gold-api.com, gratuit, sans cle) - contrat a terme a la meme minute, 1 echantillon / heure.
+# Un echantillon, une fois ecrit (basis_cache.json, branche data), ne change plus : l'historique recale est stable d'un cycle a l'autre.
+# Sans ecart recent (source en panne), l'instrument est ignore : on ne publie JAMAIS de niveaux avec un decalage inconnu.
 BASIS_FILE = Path(os.environ.get("SIGNALS_DATA_DIR") or DIR) / "basis_cache.json"
-DUKA_URL = "https://datafeed.dukascopy.com/datafeed/{pair}/{y}/{m:02d}/{d:02d}/{h:02d}h_ticks.bi5"   # mois numerotes a partir de 0
-BASIS_BACKFILL_DAYS = 30
-BASIS_REQUESTS_PER_CALL = 8          # requetes reseau max par instrument et par appel (le rattrapage se fait sur quelques cycles)
-BASIS_MAX_STALE_H = 72               # sans ecart recent (source HS), l'instrument est ignore plutot que publie avec un decalage inconnu
-BASIS_TIME_BUDGET_S = 25.0           # temps reseau max par passage et par instrument : une panne de la source ne doit jamais bloquer les scans
+BASIS_MAX_STALE_H = {"cash": 72, "spot": 24}      # anciennete maximale du dernier ecart (72 h : l'indice ne cote pas le week-end)
+GOLD_API = "https://api.gold-api.com/price/{sym}"
 _BASIS: Optional[dict] = None
-_BASIS_DONE: set = set()             # un seul rattrapage par instrument et par passage (un passage = un cycle de 5 min)
-_DUKA_FAILS = 0                      # pannes consecutives de la source dans ce passage : au bout de 2 on n'insiste plus
+_BASIS_DONE: set = set()                          # un seul calcul d'ecart par instrument et par passage (un passage = un cycle de 5 min)
 
 
 def _basis_all() -> dict:
@@ -290,69 +289,58 @@ def _basis_save() -> None:
         pass
 
 
-def _duka_last_bid(pair: str, hour: pd.Timestamp) -> Optional[float]:
-    """Dernier cours acheteur (bid) CFD de l'heure UTC commencant a `hour` ; None si pas de ticks (marche ferme) ou source indisponible."""
-    global _DUKA_FAILS
+def _spot_quote(sym: str) -> Optional[Tuple[float, pd.Timestamp]]:
+    """(prix au comptant, heure UTC naive du cours) depuis gold-api.com ; None si injoignable ou cours perime (marche ferme)."""
     import requests
-    if _DUKA_FAILS >= 2:
+    try:
+        j = requests.get(GOLD_API.format(sym=sym), headers={"User-Agent": "Mozilla/5.0 (GOTA signals)"}, timeout=15).json()
+        t = pd.Timestamp(j["updatedAt"])
+        t = t.tz_convert("UTC").tz_localize(None) if t.tzinfo else t
+        price = float(j["price"])
+    except Exception:
         return None
-    url = DUKA_URL.format(pair=pair, y=hour.year, m=hour.month - 1, d=hour.day, h=hour.hour)
-    for k in range(2):
-        try:
-            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (GOTA signals)"}, timeout=15)
-        except Exception:
-            time.sleep(1)
-            continue
-        if r.status_code == 200:
-            _DUKA_FAILS = 0
-            try:
-                raw = lzma.decompress(r.content) if r.content else b""
-            except Exception:
-                return None
-            n = len(raw) // 20
-            if n == 0:
-                return None
-            _ms, _ask, bid, _av, _bv = struct.unpack(">IIIff", raw[(n - 1) * 20:n * 20])
-            return bid / 1000.0
-        if r.status_code in (403, 404):
-            _DUKA_FAILS = 0
-            return None                                           # pas de ticks cette heure-la (marche ferme)
-        time.sleep(1)                                             # 503 / 429 : un seul nouvel essai
-    _DUKA_FAILS += 1
-    return None
+    if not (100 < price < 100000) or abs(utc_now() - t) > pd.Timedelta(minutes=15):
+        return None
+    return price, t
 
 
 def _update_basis(sid: str) -> None:
-    """Complete le cache d'ecarts de `sid` : derniere heure complete, puis rattrapage progressif des jours passes."""
+    """Complete le cache d'ecarts (vrai prix - contrat a terme) de `sid`."""
     if sid in _BASIS_DONE:
         return
     _BASIS_DONE.add(sid)
     cfg = UNIVERSE[sid]
-    fut = _yf_fetch(cfg["yahoo"], "1h", "730d")
-    if fut is None or len(fut) == 0:
-        return
-    t_start = time.time()
+    kind, _, ref = str(cfg["anchor"]).partition(":")
     store = _basis_all().setdefault(sid, {})
-    now = utc_now()
-    wanted = [(now - pd.Timedelta(minutes=75)).floor("h")]        # derniere heure complete (Dukascopy publie avec un peu de retard)
-    for back in range(1, BASIS_BACKFILL_DAYS + 1):
-        day = (now - pd.Timedelta(days=back)).normalize()
-        if day.weekday() < 5:
-            wanted.append(day + pd.Timedelta(hours=15))
-    tried, dirty = 0, False
-    for h in wanted:
-        key = h.strftime("%Y-%m-%dT%H")
-        if key in store or h not in fut.index:
-            continue
-        if tried >= BASIS_REQUESTS_PER_CALL or time.time() - t_start > BASIS_TIME_BUDGET_S or _DUKA_FAILS >= 2:
-            break
-        tried += 1
-        bid = _duka_last_bid(cfg["anchor"], h)
-        if bid is None:
-            continue
-        store[key] = round(bid - float(fut.loc[h, "close"]), 3)
-        dirty = True
-    old = (now - pd.Timedelta(days=45)).strftime("%Y-%m-%dT%H")
+    dirty = False
+    try:
+        fut5 = _yf_fetch(cfg["yahoo"], "5m", "30d")
+        if fut5 is None or len(fut5) == 0:
+            return
+        if kind == "cash":
+            cash5 = _yf_fetch(ref, "5m", "30d")
+            if cash5 is None or len(cash5) == 0:
+                return
+            common = fut5.index.intersection(cash5.index)
+            if len(common):
+                diff = (cash5.loc[common, "close"] - fut5.loc[common, "close"]).dropna()
+                for t, v in diff.groupby(diff.index.floor("h")).median().items():
+                    key = t.strftime("%Y-%m-%dT%H")
+                    if key not in store and abs(v) < 0.05 * float(fut5["close"].iloc[-1]):      # ecart plausible (< 5 % du prix)
+                        store[key] = round(float(v), 3)
+                        dirty = True
+        elif kind == "spot":
+            q = _spot_quote(ref)
+            if q is not None:
+                price, t = q
+                key = t.floor("h").strftime("%Y-%m-%dT%H")
+                pos = fut5.index.searchsorted(t, side="right") - 1
+                if key not in store and pos >= 0 and t - fut5.index[pos] <= pd.Timedelta(minutes=12):
+                    store[key] = round(price - float(fut5["close"].iloc[pos]), 3)
+                    dirty = True
+    except Exception:
+        pass
+    old = (utc_now() - pd.Timedelta(days=45)).strftime("%Y-%m-%dT%H")
     for k in [k for k in store if k < old]:
         del store[k]
         dirty = True
@@ -361,14 +349,15 @@ def _update_basis(sid: str) -> None:
 
 
 def _anchor(sid: str, df: pd.DataFrame) -> Optional[pd.DataFrame]:
-    """Recale des bougies de contrat a terme sur le prix CFD du courtier. None si aucun ecart recent n'est connu."""
+    """Recale des bougies de contrat a terme sur le prix du courtier. None si aucun ecart recent n'est connu."""
     _update_basis(sid)
     store = _basis_all().get(sid) or {}
     if not store:
         return None
     keys = sorted(store)
     times = pd.to_datetime([k + ":00" for k in keys], format="%Y-%m-%dT%H:%M")
-    if utc_now() - times[-1] > pd.Timedelta(hours=BASIS_MAX_STALE_H):
+    kind = str(UNIVERSE[sid]["anchor"]).partition(":")[0]
+    if utc_now() - times[-1] > pd.Timedelta(hours=BASIS_MAX_STALE_H.get(kind, 24)):
         return None
     vals = np.array([store[k] for k in keys], dtype=float)
     pos = np.clip(np.searchsorted(times.values, df.index.values, side="right") - 1, 0, len(vals) - 1)

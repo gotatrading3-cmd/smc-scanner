@@ -1,6 +1,6 @@
 name: Sonde donnees
 
-# Test ponctuel (supprime apres usage) : l'or et les indices US recales sur le prix CFD fonctionnent-ils depuis GitHub ?
+# Test ponctuel (supprime apres usage) : l'or et les indices US recales sur le prix du courtier fonctionnent-ils depuis GitHub ?
 # Ne publie RIEN : aucun jeton Telegram n'est fourni a ce job.
 
 on:
@@ -12,7 +12,7 @@ permissions:
 jobs:
   sonde:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 10
     env:
       SIGNAL_BACKEND: yahoo
       SIGNALS_DATA_DIR: /tmp/probe_data
@@ -33,31 +33,27 @@ jobs:
           import pandas as pd
           import signal_data as sd
           from signal_engine import analyze, htf_bias
+          print("heure UTC :", sd.utc_now())
           print("symboles disponibles :", len(sd.available_ids()), [i for i in sd.available_ids() if sd.UNIVERSE[i].get("anchor")])
+          q = sd._spot_quote("XAU")
+          print("prix de l'or au comptant (gold-api) :", q)
           for sid in ("XAUUSD", "US100", "US30", "US500", "EURUSD"):
               t0 = time.time()
               anchored = bool(sd.UNIVERSE[sid].get("anchor"))
               if anchored:
-                  for k in range(4):                                  # rattrapage des ecarts passes (quelques requetes a la fois)
-                      t1 = time.time()
-                      sd._BASIS_DONE.discard(sid)
-                      sd._update_basis(sid)
-                      print(f"[{sid}] rattrapage {k + 1}/4 : {len(sd._basis_all().get(sid, {}))} echantillons, {time.time() - t1:.0f}s, pannes source={sd._DUKA_FAILS}", flush=True)
+                  sd._update_basis(sid)
                   store = sd._basis_all().get(sid, {})
                   ks = sorted(store)
-                  print(f"[{sid}] ecarts CFD-contrat a terme : {len(ks)} echantillons | derniers : {[(k, store[k]) for k in ks[-3:]]}")
+                  print(f"[{sid}] ecarts vrai prix - contrat a terme : {len(ks)} echantillons | premiers : {[(k[5:], store[k]) for k in ks[:2]]} | derniers : {[(k[5:], store[k]) for k in ks[-3:]]}")
               df1 = sd.get_rates(sid, "4h", 700)
               dfh = sd.get_rates(sid, "1d", 1000)
               if df1 is None or dfh is None:
                   print(f"[{sid}] DONNEES INDISPONIBLES (h4={None if df1 is None else len(df1)}, d1={None if dfh is None else len(dfh)})")
                   continue
               last = df1.iloc[-1]
-              print(f"[{sid}] H4 : {len(df1)} bougies, D1 : {len(dfh)} | derniere bougie {df1.index[-1]} cloture {last['close']:.2f} | {time.time() - t0:.0f}s")
-              if anchored:
-                  h = (sd.utc_now() - pd.Timedelta(minutes=75)).floor("h")
-                  ref = sd._duka_last_bid(sd.UNIVERSE[sid]["anchor"], h)
-                  one = sd.get_rates(sid, "1h", 5)
-                  print(f"      controle : prix CFD Dukascopy a {h} = {ref} ; cloture H1 recalee a cette heure = {one['close'].get(h)}")
+              raw = sd._yf_fetch(sd.UNIVERSE[sid]["yahoo"], "1h", "730d")
+              print(f"[{sid}] H4 : {len(df1)} bougies, D1 : {len(dfh)} | derniere bougie {df1.index[-1]} cloture {last['close']:.2f}"
+                    + (f" (contrat a terme brut : {raw['close'].iloc[-1]:.2f})" if anchored else "") + f" | {time.time() - t0:.0f}s")
               meta = sd.symbol_meta(sid)
               bias = htf_bias(dfh, df1.index, 240, htf_minutes=1440)
               wl = []
