@@ -1,0 +1,70 @@
+name: Sonde donnees
+
+# Test ponctuel (supprime apres usage) : quelles sources gratuites de prix (or au comptant, indices) sont joignables depuis GitHub ?
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sonde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests yfinance pandas
+      - name: Sonde
+        run: |
+          python - <<'EOF'
+          import lzma, struct, io, json, datetime as dt
+          import requests
+          H = {"User-Agent": "Mozilla/5.0 (GOTA research)"}
+          def show(name, fn):
+              try:
+                  print(f"[{name}] {fn()}")
+              except Exception as e:
+                  print(f"[{name}] ERREUR {type(e).__name__}: {str(e)[:120]}")
+          def get(url, **k):
+              return requests.get(url, headers=H, timeout=25, **k)
+          now = dt.datetime.now(dt.timezone.utc)
+          print("heure UTC :", now)
+          # 1) Dukascopy : ticks de l'heure precedente (mois numerote a partir de 0)
+          def duka(pair, scale):
+              h = (now - dt.timedelta(hours=2))
+              url = f"https://datafeed.dukascopy.com/datafeed/{pair}/{h.year}/{h.month - 1:02d}/{h.day:02d}/{h.hour:02d}h_ticks.bi5"
+              r = get(url)
+              if r.status_code != 200 or not r.content:
+                  return f"HTTP {r.status_code} {len(r.content)} octets ({url[-40:]})"
+              data = lzma.decompress(r.content)
+              n = len(data) // 20
+              ms, ask, bid, av, bv = struct.unpack(">IIIff", data[(n - 1) * 20:n * 20])
+              return f"HTTP 200 | {n} ticks | dernier tick +{ms/1000:.0f}s : bid {bid/scale} ask {ask/scale}"
+          show("Dukascopy XAUUSD", lambda: duka("XAUUSD", 1000))
+          show("Dukascopy NASDAQ100 (USATECHIDXUSD)", lambda: duka("USATECHIDXUSD", 1000))
+          show("Dukascopy DOW (USA30IDXUSD)", lambda: duka("USA30IDXUSD", 1000))
+          show("Dukascopy S&P500 (USA500IDXUSD)", lambda: duka("USA500IDXUSD", 1000))
+          show("Dukascopy EURUSD (temoin)", lambda: duka("EURUSD", 100000))
+          # 2) Stooq
+          def stooq(sym, iv):
+              r = get(f"https://stooq.com/q/d/l/?s={sym}&i={iv}")
+              t = r.text.strip()
+              return f"HTTP {r.status_code} | {len(t.splitlines())} lignes | fin : {t.splitlines()[-1][:80] if t else ''}"
+          show("Stooq xauusd 60 min", lambda: stooq("xauusd", "60"))
+          show("Stooq xauusd jour", lambda: stooq("xauusd", "d"))
+          show("Stooq ^ndx 60 min", lambda: stooq("^ndx", "60"))
+          # 3) autres
+          show("gold-api.com", lambda: (lambda r: f"HTTP {r.status_code} {r.text[:120]}")(get("https://api.gold-api.com/price/XAU")))
+          show("LBMA or PM", lambda: (lambda r: f"HTTP {r.status_code} {len(r.text)} car. | {r.text[:80]!r}")(get("https://prices.lbma.org.uk/json/gold_pm.json")))
+          show("Binance PAXG (jeton or)", lambda: (lambda r: f"HTTP {r.status_code} {r.text[:120]}")(get("https://data-api.binance.vision/api/v3/ticker/price?symbol=PAXGUSDT")))
+          # 4) Yahoo : or au comptant, futures, indices
+          import yfinance as yf
+          for t in ("XAUUSD=X", "GC=F", "NQ=F", "^NDX", "YM=F", "^DJI", "ES=F", "^GSPC", "SI=F", "CL=F"):
+              def y(t=t):
+                  d = yf.Ticker(t).history(period="5d", interval="1h", auto_adjust=False, actions=False)
+                  return "aucune donnee" if d is None or d.empty else f"{len(d)} barres | derniere {str(d.index[-1])[:16]} cloture {d['Close'].iloc[-1]:.2f}"
+              show("Yahoo " + t, y)
+          EOF
