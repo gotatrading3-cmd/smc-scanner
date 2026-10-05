@@ -61,4 +61,14 @@ jobs:
               recent = [s for s in sigs if pd.Timestamp(s.bar_open) > df1.index[-1] - pd.Timedelta(days=30)]
               print(f"      moteur : {len(sigs)} signaux sur tout l'historique, {len(recent)} sur 30 jours ; dernier : "
                     f"{(recent[-1].direction + ' ' + str(recent[-1].bar_open) + ' entree ' + format(recent[-1].entry, '.2f') + ' stop ' + format(recent[-1].sl, '.2f')) if recent else 'aucun'}")
+          # passage complet du vrai code de scan (sans aucune publication : pas de jeton Telegram ici)
+          import signal_runner as sr
+          cfg, st = sr.load_cfg(), sr.load_state()
+          now = sd.utc_now()
+          for sid in ("US100", "US30", "US500", "XAUUSD", "EURUSD"):
+              try:
+                  found = sr.scan_symbol(sid, sd.UNIVERSE[sid]["cls"], st, cfg, now)
+                  print(f"[scan_symbol {sid}] signaux sur la derniere bougie : {len(found)} | derniere bougie notee : {st['last_bar'].get(sid)} | prochaine verification : {st['next_check'].get(sid)}")
+              except Exception as e:
+                  print(f"[scan_symbol {sid}] ERREUR {type(e).__name__}: {e}")
           EOF

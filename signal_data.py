@@ -330,14 +330,28 @@ def _update_basis(sid: str) -> None:
                         store[key] = round(float(v), 3)
                         dirty = True
         elif kind == "spot":
+            # Yahoo diffuse les contrats a terme avec ~10 min de retard (le comptant est instantane) : on NOTE la cotation de maintenant et
+            # on la compare au contrat a terme AU MEME INSTANT une fois que sa barre de 5 minutes est disponible (plus de 25 min apres).
+            pend = _basis_all().setdefault("_pending", {}).setdefault(sid, [])
             q = _spot_quote(ref)
-            if q is not None:
-                price, t = q
+            if q is not None and (not pend or pd.Timestamp(pend[-1][0]) < q[1] - pd.Timedelta(minutes=2)):
+                pend.append([q[1].isoformat(), q[0]])
+                dirty = True
+            keep = []
+            for iso, price in pend:
+                t = pd.Timestamp(iso)
+                if utc_now() - t < pd.Timedelta(minutes=25):
+                    keep.append([iso, price])
+                    continue
+                dirty = True
                 key = t.floor("h").strftime("%Y-%m-%dT%H")
-                pos = fut5.index.searchsorted(t, side="right") - 1
-                if key not in store and pos >= 0 and t - fut5.index[pos] <= pd.Timedelta(minutes=12):
-                    store[key] = round(price - float(fut5["close"].iloc[pos]), 3)
-                    dirty = True
+                o = t.floor("5min")
+                if key not in store and o in fut5.index:
+                    bar = fut5.loc[o]
+                    fut_at = float(bar["open"]) + (float(bar["close"]) - float(bar["open"])) * ((t - o) / pd.Timedelta(minutes=5))
+                    store[key] = round(price - fut_at, 3)
+            if len(keep) != len(pend):
+                pend[:] = keep
     except Exception:
         pass
     old = (utc_now() - pd.Timedelta(days=45)).strftime("%Y-%m-%dT%H")
