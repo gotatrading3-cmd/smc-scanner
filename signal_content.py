@@ -1,14 +1,18 @@
 """
 signal_content.py - Textes du groupe PUBLIC : marketing HUMAIN et HONNETE.
 
-Ton : chaleureux, direct, en francais courant ("on", emojis mesures). Chaque type de message a plusieurs
-variantes qui TOURNENT (jamais deux fois la meme d'affilee) pour que le groupe ne sonne pas robotique.
+Ton : comme si c'etait le trader lui-meme qui ecrivait au fil de la journee - "je" pour ce qu'il regarde et ce qu'il fait,
+"on" pour l'equipe et le VIP, francais courant, emojis mesures. JAMAIS de vocabulaire de machine ("scan termine", "analyse en cours",
+"UTC", "bougie H4", "filtres validés"...). Chaque type de message a plusieurs variantes qui TOURNENT (jamais deux fois la meme
+d'affilee) pour que le groupe ne sonne pas robotique.
 
 Regles d'ecriture (volontairement dans le code) :
 - tout ce qui est annonce est REEL : signaux, resultats (gains ET pertes), chiffres de marche calcules
 - aucune promesse de gain, aucun temoignage invente, aucune fausse urgence / rarete
 - "deja dans le VIP" : vrai (le VIP est publie en premier) ; "deja en profit" : uniquement une fois un objectif reellement atteint
 - le groupe public montre QUELQUES signaux en entier ; le VIP les recoit tous, avec l'analyse et le suivi complets
+- le public ne voit JAMAIS combien ni quelles paires sont analysees / surveillees (demande du 2026-09-30) ; en revanche il voit
+  combien de positions on a prises dans le VIP et combien sont encore ouvertes (demande du 2026-10-05)
 - le lien pour nous ecrire est ajoute sous chaque image par le publieur (signal_publisher.Publisher.post_public)
 """
 from __future__ import annotations
@@ -41,11 +45,11 @@ def public_signal(st: dict, pair: str, tf: str, direction: str) -> str:
     long_ = direction == "LONG"
     d = dict(pair=html.escape(pair), tf=tf, dot="🟢" if long_ else "🔴", w="ACHAT" if long_ else "VENTE")
     v = [
-        "{dot} <b>{w} {pair}</b> · {tf}\n\nCe signal est déjà dans le groupe VIP, avec l'analyse complète. On vous montre le trade ici et on annonce chaque étape 👀",
-        "{dot} <b>{pair}</b> · {tf} — {w}\n\nLes membres VIP l'ont reçu à l'ouverture. Suivez son évolution en direct ici : objectif atteint ou stop touché, on vous le dit.",
-        "{dot} Nouveau trade : <b>{w} {pair}</b> ({tf}).\n\nDéjà envoyé dans le VIP. On le suit ici, gagnant ou perdant 🙂",
-        "{dot} <b>{pair}</b> · {w} · {tf}\n\nCe setup vient de valider nos filtres et il est déjà dans le groupe VIP. Regardez comment il évolue — je poste chaque étape.",
-        "{dot} On vient d'envoyer <b>{w} {pair}</b> ({tf}) au groupe VIP : plan complet, analyse et suivi y sont déjà.\n\nVous pouvez suivre le trade ici, en direct 👀",
+        "{dot} <b>{w} {pair}</b> · {tf}\n\nJe viens de le prendre. Il est déjà dans le VIP, avec toute l'analyse. Je vous le montre ici et je vous dis où il en est à chaque étape 👀",
+        "{dot} <b>{pair}</b> · {w} · {tf}\n\nLes membres du VIP l'ont reçu dès l'ouverture. Ici, je le suis avec vous : objectif atteint ou stop touché, je vous le dis.",
+        "{dot} Nouveau trade : <b>{w} {pair}</b> ({tf}).\n\nDéjà envoyé dans le VIP. Je le suis ici, qu'il gagne ou qu'il perde 🙂",
+        "{dot} Le voilà : <b>{w} {pair}</b> ({tf}).\n\nLe plan complet et l'analyse sont déjà dans le VIP. Regardez comment il évolue, je poste chaque étape.",
+        "{dot} Je viens d'envoyer <b>{w} {pair}</b> ({tf}) au VIP : le plan complet y est déjà.\n\nIci, vous pouvez suivre le trade en direct 👀",
     ]
     return pick(st, "public_signal", v).format(**d)
 
@@ -69,27 +73,27 @@ def progress(st: dict, kind: str, pair: str, r: float) -> str:
     p, rr = html.escape(pair), _r(r)
     bank: Dict[str, List[str]] = {
         "TP1": [
-            "🎯 <b>TP1 atteint sur {p}</b> — les membres du VIP qui ont suivi le signal sont déjà en profit.\n\nLe stop est remonté à l'entrée : le reste du trade est protégé. On laisse courir 👀",
+            "🎯 <b>TP1 touché sur {p}</b> — ceux qui ont suivi le signal dans le VIP sont déjà dans le vert.\n\nJ'ai remonté le stop à l'entrée : le reste du trade est protégé. On laisse courir 👀",
             "✅ <b>{p}</b> : premier objectif touché ! Côté VIP, c'est déjà dans le vert et le stop est passé à l'entrée. La suite, on la suit ensemble 🙂",
             "👏 <b>{p}</b> avance comme prévu : TP1 atteint. Dans le VIP, une première partie est déjà sécurisée et le reste est protégé (stop à l'entrée).",
         ],
         "TP2": [
             "🎯🎯 <b>{p}</b> : deuxième objectif atteint ! Deux objectifs sur trois validés côté VIP, le stop est déjà à l'entrée. Il reste la dernière partie, en route vers l'objectif final.",
-            "🔥 TP2 sur <b>{p}</b> ! Le trade se déroule exactement comme prévu — les membres VIP sont déjà bien dans le vert. On regarde la suite.",
+            "🔥 TP2 sur <b>{p}</b> ! Le trade se déroule comme prévu — les membres VIP sont déjà bien dans le vert. On regarde la suite.",
         ],
         "TP3": [
             "🏆 <b>{p}</b> : objectif final atteint ! Trade bouclé de A à Z. Résultat : {rr}.\n\nBravo aux membres du VIP qui l'ont suivi depuis l'ouverture 🙌",
             "✨ Trade terminé sur <b>{p}</b> : les trois objectifs sont validés ({rr}). Il était dans le VIP dès l'ouverture — merci à celles et ceux qui nous font confiance 🤝",
         ],
         "BE": [
-            "⏹ <b>{p}</b> : le prix est revenu à l'entrée après avoir donné une première partie du gain — on referme le reste sans perte. Résultat final : {rr}.\n\nC'est justement pour ça qu'on remonte le stop : on protège ce qui est déjà gagné.",
+            "⏹ <b>{p}</b> : le prix est revenu à l'entrée après avoir donné une première partie du gain — je referme le reste sans perte. Résultat final : {rr}.\n\nC'est justement pour ça qu'on remonte le stop : on protège ce qui est déjà gagné.",
         ],
         "SL": [
-            "🛑 <b>{p}</b> : le stop est touché ({rr}).\n\nÇa arrive, et c'est prévu dans le plan : la perte est limitée d'avance et on passe au setup suivant. On vous le dit aussi quand ça ne passe pas — c'est ça, la transparence.",
-            "📉 Petite perte sur <b>{p}</b> ({rr}) : le marché n'a pas suivi. Le stop a fait son travail, on garde la tête froide et on avance.\n\nOn publie les gains comme les pertes — sinon ça n'aurait aucun sens.",
+            "🛑 <b>{p}</b> : le stop est touché ({rr}).\n\nÇa arrive, et c'est prévu dans le plan : la perte est limitée d'avance et on passe au trade suivant. Je vous le dis aussi quand ça ne passe pas — c'est ça, la transparence.",
+            "📉 Petite perte sur <b>{p}</b> ({rr}) : le marché n'a pas suivi. Le stop a fait son travail, je garde la tête froide et j'avance.\n\nOn publie les gains comme les pertes — sinon ça n'aurait aucun sens.",
         ],
         "EXPIRED": [
-            "⌛ <b>{p}</b> : le délai prévu est atteint, on clôture le reste du trade au marché. Résultat final : {rr}. Le plan est respecté, on passe à la suite.",
+            "⌛ <b>{p}</b> : le délai prévu est atteint, je clôture le reste du trade au marché. Résultat final : {rr}. Le plan est respecté, on passe à la suite.",
         ],
     }
     return pick(st, "progress_" + kind, bank.get(kind, bank["EXPIRED"])).format(p=p, rr=rr)
@@ -102,26 +106,26 @@ def _trend_line(snap: dict) -> str:
     if not snap.get("n_pairs"):
         return ""
     maj = "plutôt haussière" if snap.get("up", 0) >= snap.get("down", 0) else "plutôt baissière"
-    return f"Tendance de fond {maj} sur l'ensemble du marché en ce moment."
+    return f"La tendance de fond est {maj} sur l'ensemble du marché en ce moment."
 
 
 def _watch_line(watch: List[str]) -> str:
     if not watch:
-        return "Aucune zone intéressante à proximité pour l'instant : la patience fait partie du plan."
-    return "👀 Certaines zones nous intéressent particulièrement en ce moment. Le détail est réservé au groupe VIP."
+        return "Rien d'intéressant à proximité pour l'instant : la patience fait partie du plan."
+    return "👀 Il y a des zones qui m'intéressent en ce moment. Le détail, c'est dans le VIP."
 
 
 def morning(st: dict, snap: dict, watch: List[str], handle: str) -> str:
     ranked = snap.get("ranked") or []
     if len(ranked) < 2:
-        return "☀️ Bonjour la team ! On scanne les marchés ce matin et on vous prévient ici dès qu'il y a du mouvement 💪"
+        return "☀️ Bonjour la team ! Je regarde les marchés ce matin et je vous préviens ici dès qu'il y a du mouvement 💪"
     (t, tp), (b, bp) = ranked[0], ranked[-1]
     d = dict(top=NAMES.get(t, t), top_pct=pct(tp), bot=NAMES.get(b, b), bot_pct=pct(bp),
              trend=_trend_line(snap), watch=_watch_line(watch), h=_handle(handle))
     v = [
-        "☀️ Bonjour la team ! Petit tour d'horizon avant l'ouverture.\n\nCôté devises, {top} est la plus forte de la semaine ({top_pct}) et {bot} la plus faible ({bot_pct}). {trend}\n\n{watch}\n\nDès qu'un setup se valide, vous le voyez ici — et le plan complet part dans le VIP.",
-        "🌅 Salut tout le monde ! Ce que je vois ce matin : {top} en tête ({top_pct}), {bot} en queue de peloton ({bot_pct}). {trend}\n\n{watch}\n\nOn vous tient au courant tout au long de la journée 💪",
-        "☕ Café en main, on prépare le scan du matin.\n\n{top} domine cette semaine ({top_pct}), {bot} souffre ({bot_pct}). {trend}\n\n{watch}\n\nLe détail des signaux, comme d'habitude, c'est dans le VIP.",
+        "☀️ Bonjour la team ! Petit tour d'horizon avant l'ouverture.\n\nCôté devises, {top} est la plus forte de la semaine ({top_pct}) et {bot} la plus faible ({bot_pct}). {trend}\n\n{watch}\n\nDès qu'un trade se met en place, vous le voyez ici — et le plan complet part dans le VIP.",
+        "🌅 Salut tout le monde ! Ce que je vois ce matin : {top} en tête ({top_pct}), {bot} en queue de peloton ({bot_pct}). {trend}\n\n{watch}\n\nJe vous tiens au courant tout au long de la journée 💪",
+        "☕ Café en main, j'ouvre mes graphiques.\n\n{top} domine cette semaine ({top_pct}), {bot} souffre ({bot_pct}). {trend}\n\n{watch}\n\nLe détail des trades, comme d'habitude, c'est dans le VIP.",
     ]
     return pick(st, "morning", v).format(**d)
 
@@ -131,16 +135,16 @@ def _p2(x: float) -> str:
 
 
 def scan_report(st: dict, hh: int, n_symbols: int, n_sig: int, n_active: int, watch: List[str]) -> str:
-    """Compte rendu apres chaque cloture H4 (donnees reelles du scan) : signaux du jour, sans reveler
-    combien ni quelles paires sont analysees/surveillees (reserve au VIP - demande explicite du 2026-09-30)."""
-    a = _activity(n_sig, n_active, 0)
+    """Petit point apres chaque cloture de 4 heures (donnees reelles) : combien de positions prises dans le VIP aujourd'hui et
+    combien encore ouvertes, ecrit comme le ferait le trader. Ne revele ni combien ni quelles paires sont suivies (VIP uniquement)."""
+    a = _activity(n_sig, n_active, len(watch))
     v = [
-        "🔍 Scan H4 de {hh}:00 UTC terminé. {a}",
-        "📡 Nouvelle bougie H4 ({hh}:00 UTC) : on vient de repasser le marché en revue. {a}",
-        "🧭 Point après la clôture H4 de {hh}:00 UTC — analyse en cours. {a}",
+        "🧭 Je viens de refaire le point après la clôture de {hh}h (GMT). {a}",
+        "👀 Petit point de {hh}h GMT : je viens de repasser mes graphiques en revue. {a}",
+        "☕ J'ai jeté un œil aux graphiques à {hh}h GMT. {a}",
+        "📋 Point de {hh}h GMT : tout est à jour de mon côté. {a}",
     ]
-    text = pick(st, "scan", v).format(hh=f"{hh:02d}", a=a)
-    return text + (f"\n\n{_watch_line(watch)}" if watch else "")
+    return pick(st, "scan", v).format(hh=int(hh), a=a)
 
 
 def ranking(st: dict, snap: dict) -> Optional[str]:
@@ -162,7 +166,7 @@ def movers(st: dict, mv: dict) -> str:
     """Plus gros mouvements du jour sur les paires FX (donnees reelles)."""
     def fmt(rows) -> str:
         return " · ".join(f"{s} {_p2(p)}" for s, p in rows)
-    head = pick(st, "movers", ["📈 Mouvements du jour (depuis 00:00 UTC) :", "🔥 Ce qui bouge depuis minuit (UTC) :",
+    head = pick(st, "movers", ["📈 Ce qui bouge aujourd'hui :", "🔥 Les plus gros mouvements du jour :",
                                "👀 Les paires les plus actives aujourd'hui :"])
     lines = ([f"▲ {fmt(mv['up'])}"] if mv.get("up") else []) + ([f"▼ {fmt(mv['down'])}"] if mv.get("down") else [])
     return head + "\n" + "\n".join(lines)
@@ -181,22 +185,26 @@ def crypto(st: dict, c: dict) -> str:
 
 
 def _activity(n_sig: int, n_active: int, n_watch: int) -> str:
+    """Ce qui s'est passe dans le VIP aujourd'hui, en une phrase naturelle (chiffres reels : positions prises aujourd'hui, trades ouverts)."""
     if n_sig:
-        s = f"Depuis ce matin : {n_sig} {'signaux' if n_sig > 1 else 'signal'} envoyé{'s' if n_sig > 1 else ''} au VIP"
+        s = f"On a pris {n_sig} position{'s' if n_sig > 1 else ''} dans le VIP aujourd'hui"
         if n_active:
-            s += f", {n_active} trade{'s' if n_active > 1 else ''} en cours"
+            s += f" et {n_active} trade{'s sont' if n_active > 1 else ' est'} encore ouvert{'s' if n_active > 1 else ''}"
         return s + "."
+    if n_active:
+        return (f"Pas de nouvelle position aujourd'hui, mais {n_active} trade{'s' if n_active > 1 else ''} "
+                f"toujours ouvert{'s' if n_active > 1 else ''} côté VIP.")
     if n_watch:
-        return f"Pas de signal pour l'instant, mais {n_watch} paire{'s' if n_watch > 1 else ''} sous surveillance."
-    return "Pas de signal pour l'instant : on attend le bon moment."
+        return "Rien de validé pour l'instant, mais je garde quelques zones à l'œil."
+    return "Rien de validé pour l'instant : j'attends le bon moment."
 
 
 def new_york(st: dict, n_sig: int, n_active: int, n_watch: int) -> str:
     a = _activity(n_sig, n_active, n_watch)
     v = [
-        "🇺🇸 New York est en piste ! {a}\n\nLe marché ne dort jamais, nous non plus 😄 Toutes les nouveautés arrivent ici.",
-        "🗽 Ouverture de New York : c'est souvent là que ça s'anime. {a}\n\nOn garde les yeux ouverts et on vous prévient ici dès qu'il y a du mouvement 👀",
-        "🌎 New York vient de se réveiller. {a}\n\nRestez branchés, on vous tient au courant.",
+        "🇺🇸 New York vient d'ouvrir, c'est souvent là que ça s'anime. {a}\n\nJe garde les yeux ouverts et je vous préviens ici dès qu'il y a du mouvement 👀",
+        "🗽 Ouverture de New York ! {a}\n\nLe marché ne dort jamais, nous non plus 😄 Toutes les nouveautés arrivent ici.",
+        "🌎 New York vient de se réveiller. {a}\n\nRestez branchés, je vous tiens au courant.",
     ]
     return pick(st, "ny", v).format(a=a)
 
@@ -205,13 +213,14 @@ def evening(st: dict, outcomes: List[dict], n_sig: int, n_active: int) -> str:
     """outcomes : trades clotures aujourd'hui [{'display','label','r'}] (gains ET pertes)."""
     if outcomes:
         lines = "\n".join(f"• {o['display']} — {o['label']} ({_r(o['r'])})" for o in outcomes)
-        tail = (f"Encore {n_active} trade{'s' if n_active > 1 else ''} en cours : on vous tient au courant.\n\n" if n_active else "")
-        return f"🌙 Bilan de la journée (tous les signaux du VIP) :\n{lines}\n\n{tail}On publie tout, gains et pertes, pour que chacun voie la réalité. À demain 👋"
+        tail = (f"Encore {n_active} trade{'s' if n_active > 1 else ''} ouvert{'s' if n_active > 1 else ''} : je vous tiens au courant.\n\n" if n_active else "")
+        return f"🌙 Bilan de la journée (tous les trades du VIP) :\n{lines}\n\n{tail}On publie tout, gains et pertes, pour que chacun voie la réalité. À demain 👋"
     if n_sig or n_active:
-        return (f"🌙 Fin de journée : {max(n_sig, n_active)} trade{'s' if max(n_sig, n_active) > 1 else ''} en cours dans le VIP, "
-                "rien de clôturé pour l'instant. On vous tient au courant dès qu'il y a du nouveau.")
+        n = max(n_sig, n_active)
+        return (f"🌙 Fin de journée : {n} trade{'s' if n > 1 else ''} ouvert{'s' if n > 1 else ''} dans le VIP, "
+                "rien de clôturé pour l'instant. Je vous tiens au courant dès qu'il y a du nouveau.")
     v = [
-        "🌙 Journée calme : aucun setup n'a passé nos filtres aujourd'hui.\n\nOn ne force jamais un trade — on préfère attendre le bon moment plutôt que de trader pour trader. À demain 👋",
+        "🌙 Journée calme : rien n'a rempli mes critères aujourd'hui.\n\nJe ne force jamais un trade — je préfère attendre le bon moment plutôt que de trader pour trader. À demain 👋",
         "😴 Rien de validé aujourd'hui, et c'est très bien comme ça : un bon trader sait aussi ne rien faire.\n\nOn repart demain, toujours aussi attentifs 👀",
     ]
     return pick(st, "evening_none", v)
@@ -220,7 +229,7 @@ def evening(st: dict, outcomes: List[dict], n_sig: int, n_active: int) -> str:
 def weekend_saturday(st: dict, handle: str) -> str:
     h = _handle(handle)
     v = [
-        "🌤 Week-end : le forex se repose, la crypto (BTC, ETH) continue de tourner et on garde un œil dessus. Profitez-en pour souffler — on revient en force lundi 💪",
+        "🌤 Week-end : le forex se repose, la crypto (BTC, ETH) continue de tourner et je garde un œil dessus. Profitez-en pour souffler — on revient en force lundi 💪",
         "☀️ Bon samedi à tous ! Les marchés de devises sont fermés jusqu'à dimanche soir. Petit rappel : les signaux, l'analyse et le suivi complet, c'est dans le VIP.",
     ]
     return pick(st, "sat", v).format(h=h)
@@ -229,10 +238,10 @@ def weekend_saturday(st: dict, handle: str) -> str:
 def weekend_sunday(st: dict, snap: dict) -> str:
     ranked = snap.get("ranked") or []
     if len(ranked) < 2:
-        return "🌙 Les marchés rouvrent ce soir ! On scanne dès l'ouverture 👀"
+        return "🌙 Les marchés rouvrent ce soir ! Je regarde ça dès l'ouverture 👀"
     (t, tp), (b, bp) = ranked[0], ranked[-1]
     return (f"🌙 Les marchés rouvrent ce soir ! Tour d'horizon pour bien démarrer la semaine : {NAMES.get(t, t)} en tête ({pct(tp)}), "
-            f"{NAMES.get(b, b)} en retrait ({pct(bp)}). {_trend_line(snap)}\n\nOn scanne dès l'ouverture 👀")
+            f"{NAMES.get(b, b)} en retrait ({pct(bp)}). {_trend_line(snap)}\n\nJe regarde ça dès l'ouverture 👀")
 
 
 def cta(st: dict, handle: str) -> str:
