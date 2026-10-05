@@ -14,7 +14,7 @@ on:
         type: string
         default: "340"
   schedule:
-    - cron: "17 */3 * * *"
+    - cron: "17 * * * *"
 
 concurrency:
   group: gota-chain
@@ -71,9 +71,29 @@ jobs:
       - name: Boucle de scans (un toutes les 5 minutes)
         env:
           MINUTES: ${{ github.event.inputs.minutes || '340' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git -C data config user.name "gota-signals[bot]"
           git -C data config user.email "gota-signals@users.noreply.github.com"
+
+          # Surveillance croisee : si la chaine voisine (actualites) est morte - aucune execution en cours ni en attente, et sa derniere
+          # execution s'est terminee en succes ou en echec (une ANNULATION = arret voulu, on n'y touche pas) - on la relance.
+          watch_chain() {
+            local wf="$1" n last
+            n=$(gh run list --workflow="$wf" --repo "$GITHUB_REPOSITORY" --limit 6 --json status --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null) || return 0
+            [ "$n" = "0" ] || return 0
+            sleep 40
+            n=$(gh run list --workflow="$wf" --repo "$GITHUB_REPOSITORY" --limit 6 --json status --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null) || return 0
+            [ "$n" = "0" ] || return 0
+            last=$(gh run list --workflow="$wf" --repo "$GITHUB_REPOSITORY" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null) || return 0
+            case "$last" in
+              success|failure|timed_out)
+                echo "chaine $wf arretee ($last) : relance"
+                gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" || true ;;
+            esac
+            return 0
+          }
+
           END=$(( $(date +%s) + MINUTES * 60 ))
           N=0
           while [ "$(date +%s)" -lt "$END" ]; do
@@ -93,6 +113,7 @@ jobs:
               done
             fi
             cd ..
+            watch_chain news.yml || true
             # le cycle suivant part 5 minutes apres le debut de celui-ci
             WAIT=$(( T0 + 300 - $(date +%s) ))
             if [ "$WAIT" -gt 0 ]; then sleep "$WAIT"; fi

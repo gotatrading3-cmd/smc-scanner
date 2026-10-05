@@ -18,7 +18,7 @@ on:
         type: string
         default: "340"
   schedule:
-    - cron: "41 */3 * * *"
+    - cron: "41 * * * *"
 
 concurrency:
   group: gota-news-chain
@@ -76,9 +76,28 @@ jobs:
       - name: Boucle (un cycle par minute)
         env:
           MINUTES: ${{ github.event.inputs.minutes || '340' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           git -C newsdata config user.name "gota-news[bot]"
           git -C newsdata config user.email "gota-news@users.noreply.github.com"
+
+          # Surveillance croisee : si la chaine voisine (signaux) est morte - aucune execution en cours ni en attente, et sa derniere
+          # execution s'est terminee en succes ou en echec (une ANNULATION = arret voulu, on n'y touche pas) - on la relance.
+          watch_chain() {
+            local wf="$1" n last
+            n=$(gh run list --workflow="$wf" --repo "$GITHUB_REPOSITORY" --limit 6 --json status --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null) || return 0
+            [ "$n" = "0" ] || return 0
+            sleep 40
+            n=$(gh run list --workflow="$wf" --repo "$GITHUB_REPOSITORY" --limit 6 --json status --jq '[.[] | select(.status != "completed")] | length' 2>/dev/null) || return 0
+            [ "$n" = "0" ] || return 0
+            last=$(gh run list --workflow="$wf" --repo "$GITHUB_REPOSITORY" --limit 1 --json conclusion --jq '.[0].conclusion' 2>/dev/null) || return 0
+            case "$last" in
+              success|failure|timed_out)
+                echo "chaine $wf arretee ($last) : relance"
+                gh workflow run "$wf" --repo "$GITHUB_REPOSITORY" || true ;;
+            esac
+            return 0
+          }
 
           save_state() {
             # une seule validation sur la branche (historique inutile ici) : on la reecrit a chaque sauvegarde
@@ -106,6 +125,7 @@ jobs:
               save_state || echo "sauvegarde de l'etat impossible ce coup-ci (on continue)"
               LAST_SAVE=$(date +%s)
             fi
+            if [ $(( N % 10 )) -eq 0 ]; then watch_chain continu.yml || true; fi
             WAIT=$(( T0 + 60 - $(date +%s) ))
             if [ "$WAIT" -gt 0 ]; then sleep "$WAIT"; fi
           done
