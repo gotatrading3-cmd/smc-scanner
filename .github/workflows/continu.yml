@@ -50,6 +50,7 @@ jobs:
       SIGNALS_MAX_PER_DAY: ${{ vars.SIGNALS_MAX_PER_DAY }}
       SIGNALS_SYMBOLS: ${{ vars.SIGNALS_SYMBOLS }}
       SIGNALS_PAUSED: ${{ vars.SIGNALS_PAUSED }}
+      SIGNALS_FUTURES: ${{ vars.SIGNALS_FUTURES }}
     steps:
       - uses: actions/checkout@v4
 

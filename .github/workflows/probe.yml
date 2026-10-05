@@ -1,6 +1,7 @@
 name: Sonde donnees
 
-# Test ponctuel (supprime apres usage) : quelles sources gratuites de prix (or au comptant, indices) sont joignables depuis GitHub ?
+# Test ponctuel (supprime apres usage) : l'or et les indices US recales sur le prix CFD fonctionnent-ils depuis GitHub ?
+# Ne publie RIEN : aucun jeton Telegram n'est fourni a ce job.
 
 on:
   workflow_dispatch:
@@ -11,60 +12,54 @@ permissions:
 jobs:
   sonde:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
+    env:
+      SIGNAL_BACKEND: yahoo
+      SIGNALS_DATA_DIR: /tmp/probe_data
+      PYTHONIOENCODING: utf-8
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install requests yfinance pandas
+          cache: pip
+          cache-dependency-path: requirements-cloud.txt
+      - run: pip install -r requirements-cloud.txt
       - name: Sonde
         run: |
           python - <<'EOF'
-          import lzma, struct, io, json, datetime as dt
-          import requests
-          H = {"User-Agent": "Mozilla/5.0 (GOTA research)"}
-          def show(name, fn):
-              try:
-                  print(f"[{name}] {fn()}")
-              except Exception as e:
-                  print(f"[{name}] ERREUR {type(e).__name__}: {str(e)[:120]}")
-          def get(url, **k):
-              return requests.get(url, headers=H, timeout=25, **k)
-          now = dt.datetime.now(dt.timezone.utc)
-          print("heure UTC :", now)
-          # 1) Dukascopy : ticks de l'heure precedente (mois numerote a partir de 0)
-          def duka(pair, scale):
-              h = (now - dt.timedelta(hours=2))
-              url = f"https://datafeed.dukascopy.com/datafeed/{pair}/{h.year}/{h.month - 1:02d}/{h.day:02d}/{h.hour:02d}h_ticks.bi5"
-              r = get(url)
-              if r.status_code != 200 or not r.content:
-                  return f"HTTP {r.status_code} {len(r.content)} octets ({url[-40:]})"
-              data = lzma.decompress(r.content)
-              n = len(data) // 20
-              ms, ask, bid, av, bv = struct.unpack(">IIIff", data[(n - 1) * 20:n * 20])
-              return f"HTTP 200 | {n} ticks | dernier tick +{ms/1000:.0f}s : bid {bid/scale} ask {ask/scale}"
-          show("Dukascopy XAUUSD", lambda: duka("XAUUSD", 1000))
-          show("Dukascopy NASDAQ100 (USATECHIDXUSD)", lambda: duka("USATECHIDXUSD", 1000))
-          show("Dukascopy DOW (USA30IDXUSD)", lambda: duka("USA30IDXUSD", 1000))
-          show("Dukascopy S&P500 (USA500IDXUSD)", lambda: duka("USA500IDXUSD", 1000))
-          show("Dukascopy EURUSD (temoin)", lambda: duka("EURUSD", 100000))
-          # 2) Stooq
-          def stooq(sym, iv):
-              r = get(f"https://stooq.com/q/d/l/?s={sym}&i={iv}")
-              t = r.text.strip()
-              return f"HTTP {r.status_code} | {len(t.splitlines())} lignes | fin : {t.splitlines()[-1][:80] if t else ''}"
-          show("Stooq xauusd 60 min", lambda: stooq("xauusd", "60"))
-          show("Stooq xauusd jour", lambda: stooq("xauusd", "d"))
-          show("Stooq ^ndx 60 min", lambda: stooq("^ndx", "60"))
-          # 3) autres
-          show("gold-api.com", lambda: (lambda r: f"HTTP {r.status_code} {r.text[:120]}")(get("https://api.gold-api.com/price/XAU")))
-          show("LBMA or PM", lambda: (lambda r: f"HTTP {r.status_code} {len(r.text)} car. | {r.text[:80]!r}")(get("https://prices.lbma.org.uk/json/gold_pm.json")))
-          show("Binance PAXG (jeton or)", lambda: (lambda r: f"HTTP {r.status_code} {r.text[:120]}")(get("https://data-api.binance.vision/api/v3/ticker/price?symbol=PAXGUSDT")))
-          # 4) Yahoo : or au comptant, futures, indices
-          import yfinance as yf
-          for t in ("XAUUSD=X", "GC=F", "NQ=F", "^NDX", "YM=F", "^DJI", "ES=F", "^GSPC", "SI=F", "CL=F"):
-              def y(t=t):
-                  d = yf.Ticker(t).history(period="5d", interval="1h", auto_adjust=False, actions=False)
-                  return "aucune donnee" if d is None or d.empty else f"{len(d)} barres | derniere {str(d.index[-1])[:16]} cloture {d['Close'].iloc[-1]:.2f}"
-              show("Yahoo " + t, y)
+          import time, warnings
+          warnings.filterwarnings("ignore")
+          import pandas as pd
+          import signal_data as sd
+          from signal_engine import analyze, htf_bias
+          print("symboles disponibles :", len(sd.available_ids()), [i for i in sd.available_ids() if sd.UNIVERSE[i].get("anchor")])
+          for sid in ("XAUUSD", "US100", "US30", "US500", "EURUSD"):
+              t0 = time.time()
+              anchored = bool(sd.UNIVERSE[sid].get("anchor"))
+              if anchored:
+                  for _ in range(6):                                  # rattrapage des ecarts passes (quelques requetes a la fois)
+                      sd._update_basis(sid)
+                  store = sd._basis_all().get(sid, {})
+                  ks = sorted(store)
+                  print(f"[{sid}] ecarts CFD-contrat a terme : {len(ks)} echantillons | derniers : {[(k, store[k]) for k in ks[-3:]]}")
+              df1 = sd.get_rates(sid, "4h", 700)
+              dfh = sd.get_rates(sid, "1d", 1000)
+              if df1 is None or dfh is None:
+                  print(f"[{sid}] DONNEES INDISPONIBLES (h4={None if df1 is None else len(df1)}, d1={None if dfh is None else len(dfh)})")
+                  continue
+              last = df1.iloc[-1]
+              print(f"[{sid}] H4 : {len(df1)} bougies, D1 : {len(dfh)} | derniere bougie {df1.index[-1]} cloture {last['close']:.2f} | {time.time() - t0:.0f}s")
+              if anchored:
+                  h = (sd.utc_now() - pd.Timedelta(minutes=75)).floor("h")
+                  ref = sd._duka_last_bid(sd.UNIVERSE[sid]["anchor"], h)
+                  one = sd.get_rates(sid, "1h", 5)
+                  print(f"      controle : prix CFD Dukascopy a {h} = {ref} ; cloture H1 recalee a cette heure = {one['close'].get(h)}")
+              meta = sd.symbol_meta(sid)
+              bias = htf_bias(dfh, df1.index, 240, htf_minutes=1440)
+              wl = []
+              sigs = analyze(df1, bias, meta["point"], sid, sid, 240, sd.UNIVERSE[sid]["cls"], only_last=False, min_score=4, watch=wl)
+              recent = [s for s in sigs if pd.Timestamp(s.bar_open) > df1.index[-1] - pd.Timedelta(days=30)]
+              print(f"      moteur : {len(sigs)} signaux sur tout l'historique, {len(recent)} sur 30 jours ; dernier : "
+                    f"{(recent[-1].direction + ' ' + str(recent[-1].bar_open) + ' entree ' + format(recent[-1].entry, '.2f') + ' stop ' + format(recent[-1].sl, '.2f')) if recent else 'aucun'}")
           EOF

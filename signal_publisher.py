@@ -128,14 +128,14 @@ def _tf(tf: str) -> str:
 
 
 def _len_txt(s: Signal, d: float) -> str:
-    """Longueur (pips pour le forex, $ pour la crypto, points sinon)."""
+    """Longueur (pips pour le forex et l'or - 1 pip d'or = 0,10 $ comme chez le courtier -, $ pour la crypto, points pour les indices)."""
     m = symbol_meta(s.display) or {}
     cls = UNIVERSE.get(s.display, {}).get("cls", "")
-    if cls == "fx" and m.get("point"):
+    if cls in ("fx", "metal") and m.get("point"):
         return f"{d / (m['point'] * 10):.1f} pips"
     if cls == "crypto":
         return f"{d:,.0f} $".replace(",", " ")
-    return f"{d:,.2f} pts".replace(",", " ")
+    return f"{d:,.1f} pts".replace(",", " ")
 
 
 def _dist_txt(s: Signal, level: float) -> str:

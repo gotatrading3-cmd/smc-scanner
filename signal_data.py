@@ -3,8 +3,11 @@ signal_data.py - Donnees de marche du systeme de signaux. DEUX backends intercha
 
   mt5   : MetaTrader 5 (Windows, PC local)  -> tous les instruments, spread reel, tick volume
   yahoo : Yahoo Finance via yfinance (GitHub Actions / n'importe ou, gratuit, sans cle)
-          -> paires forex + crypto (prix spot). Metaux / indices / petrole : contrats a terme
-             chez Yahoo (decalage de prix vs CFD) => exclus du cloud, on ne publie pas de faux niveaux.
+          -> paires forex + crypto (prix spot).
+          -> or et indices US : Yahoo ne donne que les CONTRATS A TERME, decales du prix CFD du courtier (environ 35 $ sur l'or,
+             250-300 points sur le US100/US30). On garde leurs bougies (la forme du marche) mais on les RECALE sur le vrai prix
+             CFD de Dukascopy (gratuit, sans cle) : voir _anchor(). Sans ecart recent connu, l'instrument est ignore - jamais
+             de niveaux publies avec un decalage inconnu. Petrole / argent / DAX restent exclus (pas encore recales).
 
 Choix du backend : variable d'environnement SIGNAL_BACKEND (mt5|yahoo). Defaut : mt5 sous Windows,
 yahoo ailleurs. LECTURE SEULE : ce module ne passe JAMAIS d'ordre.
@@ -13,6 +16,8 @@ from __future__ import annotations
 import sys
 import os
 import json
+import lzma
+import struct
 import time
 import subprocess
 from datetime import datetime, timezone
@@ -44,7 +49,8 @@ MT5_EXE_CANDIDATES = [
 
 BACKEND = (os.environ.get("SIGNAL_BACKEND") or ("mt5" if sys.platform == "win32" else "yahoo")).lower()
 
-# id public -> {mt5: nom MT5, yahoo: ticker Yahoo (None = indisponible en spot), cls: classe d'actif}
+# id public -> {mt5: nom MT5, yahoo: ticker Yahoo (None = indisponible), cls: classe d'actif,
+#               anchor: instrument Dukascopy qui donne le prix CFD pour recaler un contrat a terme (voir _anchor)}
 UNIVERSE: Dict[str, dict] = {
     "EURUSD": dict(mt5="EURUSD", yahoo="EURUSD=X", cls="fx"),
     "GBPUSD": dict(mt5="GBPUSD", yahoo="GBPUSD=X", cls="fx"),
@@ -55,11 +61,11 @@ UNIVERSE: Dict[str, dict] = {
     "NZDUSD": dict(mt5="NZDUSD", yahoo="NZDUSD=X", cls="fx"),
     "EURJPY": dict(mt5="EURJPY", yahoo="EURJPY=X", cls="fx"),
     "GBPJPY": dict(mt5="GBPJPY", yahoo="GBPJPY=X", cls="fx"),
-    "XAUUSD": dict(mt5="GOLD", yahoo=None, cls="metal"),
+    "XAUUSD": dict(mt5="GOLD", yahoo="GC=F", cls="metal", anchor="XAUUSD"),
     "XAGUSD": dict(mt5="SILVER", yahoo=None, cls="metal"),
-    "US100": dict(mt5="US100Cash", yahoo=None, cls="index"),
-    "US30": dict(mt5="US30Cash", yahoo=None, cls="index"),
-    "US500": dict(mt5="US500Cash", yahoo=None, cls="index"),
+    "US100": dict(mt5="US100Cash", yahoo="NQ=F", cls="index", anchor="USATECHIDXUSD"),
+    "US30": dict(mt5="US30Cash", yahoo="YM=F", cls="index", anchor="USA30IDXUSD"),
+    "US500": dict(mt5="US500Cash", yahoo="ES=F", cls="index", anchor="USA500IDXUSD"),
     "GER40": dict(mt5="GER40Cash", yahoo=None, cls="index"),
     "BTCUSD": dict(mt5="BTCUSD", yahoo="BTC-USD", cls="crypto"),
     "ETHUSD": dict(mt5="ETHUSD", yahoo="ETH-USD", cls="crypto"),
@@ -77,10 +83,13 @@ TF_MIN = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
 TF_LABEL = {1: "M1", 5: "M5", 15: "M15", 60: "H1", 240: "H4", 1440: "D1"}
 
 
+FUTURES_OFF = os.environ.get("SIGNALS_FUTURES", "").strip().lower() in ("off", "0", "false", "no")   # interrupteur : or + indices
+
+
 def available_ids() -> list:
     """Instruments disponibles avec le backend courant."""
     if BACKEND == "yahoo":
-        return [k for k, v in UNIVERSE.items() if v["yahoo"]]
+        return [k for k, v in UNIVERSE.items() if v["yahoo"] and not (v.get("anchor") and FUTURES_OFF)]
     return list(UNIVERSE)
 
 
@@ -246,9 +255,120 @@ def _resample(h1: pd.DataFrame, minutes: int) -> pd.DataFrame:
     return agg.dropna(subset=["open", "close"])
 
 
+# ---- recalage des contrats a terme (or, indices US) sur le prix CFD -------------------------------------------------------------
+# Ecart = (dernier cours acheteur CFD de l'heure, Dukascopy) - (cloture de la barre horaire du contrat a terme). Mesure une fois par
+# heure (+ un point par jour ouvre a 15 h UTC pour les 30 derniers jours) et gardee dans basis_cache.json (branche data en ligne).
+# Chaque echantillon, une fois ecrit, ne change plus : l'historique recale est stable d'un cycle a l'autre.
+BASIS_FILE = Path(os.environ.get("SIGNALS_DATA_DIR") or DIR) / "basis_cache.json"
+DUKA_URL = "https://datafeed.dukascopy.com/datafeed/{pair}/{y}/{m:02d}/{d:02d}/{h:02d}h_ticks.bi5"   # mois numerotes a partir de 0
+BASIS_BACKFILL_DAYS = 30
+BASIS_REQUESTS_PER_CALL = 8          # requetes reseau max par instrument et par appel (le rattrapage se fait sur quelques cycles)
+BASIS_MAX_STALE_H = 72               # sans ecart recent (source HS), l'instrument est ignore plutot que publie avec un decalage inconnu
+_BASIS: Optional[dict] = None
+
+
+def _basis_all() -> dict:
+    global _BASIS
+    if _BASIS is None:
+        try:
+            _BASIS = json.loads(BASIS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            _BASIS = {}
+    return _BASIS
+
+
+def _basis_save() -> None:
+    try:
+        BASIS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = BASIS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(_basis_all(), separators=(",", ":")), encoding="utf-8")
+        os.replace(tmp, BASIS_FILE)
+    except Exception:
+        pass
+
+
+def _duka_last_bid(pair: str, hour: pd.Timestamp) -> Optional[float]:
+    """Dernier cours acheteur (bid) CFD de l'heure UTC commencant a `hour` ; None si pas de ticks (marche ferme) ou source indisponible."""
+    import requests
+    url = DUKA_URL.format(pair=pair, y=hour.year, m=hour.month - 1, d=hour.day, h=hour.hour)
+    for k in range(3):
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0 (GOTA signals)"}, timeout=25)
+        except Exception:
+            time.sleep(2 * (k + 1))
+            continue
+        if r.status_code == 200:
+            try:
+                raw = lzma.decompress(r.content) if r.content else b""
+            except Exception:
+                return None
+            n = len(raw) // 20
+            if n == 0:
+                return None
+            _ms, _ask, bid, _av, _bv = struct.unpack(">IIIff", raw[(n - 1) * 20:n * 20])
+            return bid / 1000.0
+        if r.status_code in (403, 404):
+            return None
+        time.sleep(2 * (k + 1))                                   # 503 / 429 : on reessaie
+    return None
+
+
+def _update_basis(sid: str) -> None:
+    """Complete le cache d'ecarts de `sid` : derniere heure complete, puis rattrapage progressif des jours passes."""
+    cfg = UNIVERSE[sid]
+    fut = _yf_fetch(cfg["yahoo"], "1h", "730d")
+    if fut is None or len(fut) == 0:
+        return
+    store = _basis_all().setdefault(sid, {})
+    now = utc_now()
+    wanted = [(now - pd.Timedelta(minutes=75)).floor("h")]        # derniere heure complete (Dukascopy publie avec un peu de retard)
+    for back in range(1, BASIS_BACKFILL_DAYS + 1):
+        day = (now - pd.Timedelta(days=back)).normalize()
+        if day.weekday() < 5:
+            wanted.append(day + pd.Timedelta(hours=15))
+    tried, dirty = 0, False
+    for h in wanted:
+        key = h.strftime("%Y-%m-%dT%H")
+        if key in store or h not in fut.index:
+            continue
+        if tried >= BASIS_REQUESTS_PER_CALL:
+            break
+        tried += 1
+        bid = _duka_last_bid(cfg["anchor"], h)
+        if bid is None:
+            continue
+        store[key] = round(bid - float(fut.loc[h, "close"]), 3)
+        dirty = True
+    old = (now - pd.Timedelta(days=45)).strftime("%Y-%m-%dT%H")
+    for k in [k for k in store if k < old]:
+        del store[k]
+        dirty = True
+    if dirty:
+        _basis_save()
+
+
+def _anchor(sid: str, df: pd.DataFrame) -> Optional[pd.DataFrame]:
+    """Recale des bougies de contrat a terme sur le prix CFD du courtier. None si aucun ecart recent n'est connu."""
+    _update_basis(sid)
+    store = _basis_all().get(sid) or {}
+    if not store:
+        return None
+    keys = sorted(store)
+    times = pd.to_datetime([k + ":00" for k in keys], format="%Y-%m-%dT%H:%M")
+    if utc_now() - times[-1] > pd.Timedelta(hours=BASIS_MAX_STALE_H):
+        return None
+    vals = np.array([store[k] for k in keys], dtype=float)
+    pos = np.clip(np.searchsorted(times.values, df.index.values, side="right") - 1, 0, len(vals) - 1)
+    out = df.copy()
+    for c in ("open", "high", "low", "close"):
+        out[c] = out[c].to_numpy(float) + vals[pos]
+    return out
+
+
 def _yahoo_rates(sym: str, tf_key: str, count: int, closed_only: bool) -> Optional[pd.DataFrame]:
     sid = _sid(sym)
-    tk = UNIVERSE.get(sid, {}).get("yahoo")
+    cfg = UNIVERSE.get(sid, {})
+    tk = cfg.get("yahoo")
     if not tk:
         return None
     if tf_key == "5m":
@@ -257,14 +377,18 @@ def _yahoo_rates(sym: str, tf_key: str, count: int, closed_only: bool) -> Option
         df = _yf_fetch(tk, "15m", "60d")
     elif tf_key in ("1h", "4h"):
         df = _yf_fetch(tk, "1h", "730d")
-        if df is not None and tf_key == "4h":
-            df = _resample(df, 240)
     elif tf_key == "1d":
         df = _yf_fetch(tk, "1d", "10y")
     else:
         return None
     if df is None or len(df) == 0:
         return None
+    if cfg.get("anchor"):                                       # or / indices US : contrat a terme -> prix CFD du courtier
+        df = _anchor(sid, df)
+        if df is None:
+            return None
+    if tf_key == "4h":
+        df = _resample(df, 240)
     df = df.tail(count).copy()
     if closed_only:
         df = df[df.index + pd.Timedelta(minutes=TF_MIN[tf_key]) <= utc_now()]
