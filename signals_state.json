@@ -101,7 +101,8 @@
   "ny": "2026-10-13",
   "movers_pm": "2026-10-13",
   "cta": "2026-10-12",
-  "account": "2026-10-07"
+  "account": "2026-10-07",
+  "nfp_recap": "2026-10-14"
  },
  "previewed": [
   "daily",
@@ -259,7 +260,8 @@
   "progress_TP1": 3,
   "progress_TP2": 2,
   "progress_BE": 1,
-  "progress_EXPIRED": 1
+  "progress_EXPIRED": 1,
+  "nfp_recap": 1
  },
  "pub_posts": {
   "2026-09-26": 5,
@@ -279,7 +281,7 @@
   "2026-10-11": 3,
   "2026-10-12": 10,
   "2026-10-13": 9,
-  "2026-10-14": 3
+  "2026-10-14": 4
  },
  "pub_sig": {
   "2026-09-28": 1,
@@ -337,7 +339,7 @@
   }
  },
  "n_symbols": 34,
- "cta_seq": 4,
+ "cta_seq": 5,
  "tg_update_offset": 719080851,
  "added_chat": {
   "id": -1003927074271,
