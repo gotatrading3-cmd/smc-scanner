@@ -156,11 +156,14 @@ def load_shadow(path: Optional[Path] = None) -> List[dict]:
     return out
 
 
-def update_shadow(st: dict, now: pd.Timestamp) -> None:
-    """Fait avancer chaque position virtuelle avec les bougies de 5 minutes (comme le suivi des vrais signaux)."""
+def update_shadow(st: dict, now: pd.Timestamp, deadline: Optional[float] = None) -> None:
+    """Fait avancer chaque position virtuelle avec les bougies de 5 minutes (comme le suivi des vrais signaux).
+    deadline : heure (time.time()) au-dela de laquelle on s'arrete ; le reste est fait au cycle suivant."""
     m = _state(st)
     cache: Dict[str, Optional[pd.DataFrame]] = {}
     for sid, rec in list(m["active"].items()):
+        if deadline is not None and time.time() > deadline:
+            break
         sig = Signal.from_dict(rec["signal"])
         sim = TradeSim.from_dict(rec["sim"])
         t0 = pd.Timestamp(sig.signal_time)
@@ -198,7 +201,7 @@ def observe(st: dict, cfg: dict, now: pd.Timestamp, ids: List[str], t_cycle: Opt
     logp = logp or (lambda msg, detail: log(f"{msg} : {detail}"))
     t0 = t_cycle if t_cycle is not None else time.time()
     try:
-        update_shadow(st, now)
+        update_shadow(st, now, deadline=t0 + BUDGET_S)
     except Exception as e:
         log(f"[MTF] suivi : erreur ignoree ({type(e).__name__}: {e})")
     min_score = int(cfg.get("min_score", 4))

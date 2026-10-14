@@ -695,6 +695,8 @@ def _observation(st: dict, cfg: dict, pubs: tuple, ids: List[str], now: pd.Times
     if signal_mtf is None:
         return
     try:
+        if signal_mtf.enabled_profiles():
+            save_state(st)                                     # point de reprise : si le cycle etait coupe pendant l'observation, le travail du robot principal est deja enregistre
         signal_mtf.observe(st, cfg, now, ids, t_cycle=t_cycle, log=log, logp=logp)
         day = str(now.date())
         if now.weekday() < 5 and now.hour * 60 + now.minute >= 21 * 60 + 30 and st["sched"].get("mtf_digest") != day:

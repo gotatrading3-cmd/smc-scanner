@@ -301,6 +301,25 @@ class Pub:
         raise AssertionError(f"l'observation ne doit jamais appeler {name}")
 
 
+saved = []
+runner.save_state = lambda s: saved.append(1)
+seen_before = []
+mtf.observe = lambda *a, **k: seen_before.append(len(saved))
+runner._observation({"sched": {}}, {"min_score": 4}, (Pub(), Pub()), [], pd.Timestamp("2026-01-05 12:00"), time.time())
+check("l'etat du robot principal est ENREGISTRE avant l'observation (un cycle coupe ne peut rien republier)", seen_before == [1], seen_before)
+os.environ["SIGNALS_OBSERVE"] = "off"
+saved.clear()
+runner._observation({"sched": {}}, {"min_score": 4}, (Pub(), Pub()), [], pd.Timestamp("2026-01-05 12:00"), time.time())
+check("observation desactivee : aucune sauvegarde supplementaire", saved == [])
+os.environ.pop("SIGNALS_OBSERVE")
+stx = {"sched": {}}
+fichier_bilan = mtf.SHADOW_FILE
+mtf.SHADOW_FILE = TMP / "echeance.jsonl"
+mtf.get_rates = serve({"5m": b5})
+mtf.register(mk_signal("2026-01-05 11:45"), stx, now)
+mtf.update_shadow(stx, pd.Timestamp("2026-01-05 15:00"), deadline=time.time() - 1)
+check("echeance de temps depassee : le suivi s'arrete (le reste au cycle suivant)", len(stx["mtf"]["active"]) == 1 and mtf.load_shadow() == [])
+mtf.SHADOW_FILE = fichier_bilan
 pv = Pub()
 mtf.observe = lambda *a, **k: None
 sti = {"sched": {}}
