@@ -75,6 +75,7 @@ CHECK_LABELS = {
     "killzone": "Kill zone (ouverture Londres/New York)",
 }
 SCORED = ("sweep", "stack", "volume", "momentum", "discount", "session", "killzone")
+PROFILE_TAGS = {"scalp_m15": "Scalp", "scalp_m30": "Scalp", "intra_h1": "Intraday"}    # etiquette affichee sur les fiches des signaux hors analyse H4
 
 
 @dataclass

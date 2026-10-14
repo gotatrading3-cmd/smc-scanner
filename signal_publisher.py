@@ -23,7 +23,7 @@ from typing import List, Optional
 import requests
 
 from notifier import TelegramNotifier
-from signal_engine import Signal, CHECK_LABELS, SCORED
+from signal_engine import Signal, CHECK_LABELS, SCORED, PROFILE_TAGS
 from signal_data import symbol_meta, UNIVERSE
 from signal_content import account_block, welcome
 
@@ -377,7 +377,8 @@ class Publisher:
         f = lambda v: _pf(v, digits)
         d = lambda v: _dist_txt(s, v)
         rr = abs(s.tps[-1] - s.entry) / max(s.risk, 1e-12)
-        cap = [f"{'🟢' if long_ else '🔴'} <b>{'ACHAT' if long_ else 'VENTE'} {html.escape(s.display)}</b> · {_tf(s.tf)}",
+        tag = f" · {PROFILE_TAGS[s.profile]}" if s.profile in PROFILE_TAGS else ""     # signaux hors analyse H4 : scalp / intraday
+        cap = [f"{'🟢' if long_ else '🔴'} <b>{'ACHAT' if long_ else 'VENTE'} {html.escape(s.display)}</b> · {_tf(s.tf)}{tag}",
                "",
                f"📍 Entrée   <code>{f(s.entry)}</code>",
                f"🛑 Stop loss   <code>{f(s.sl)}</code>   <i>−{d(s.sl)}</i>",
@@ -393,14 +394,21 @@ class Publisher:
         """L'analyse detaillee (reponse sous la fiche VIP) : pourquoi ce signal, ou est la zone, comment gerer."""
         long_ = s.direction == "LONG"
         f = lambda v: _pf(v, digits)
-        htf = "journalière" if s.tf == "240m" else "H4"
+        prof = s.profile in PROFILE_TAGS                              # signal hors analyse H4 : tendance journaliere + zone H4 active
+        htf = "journalière" if (s.tf == "240m" or prof) else "H4"
         zone = ("Order Block " if s.zone_kind == "OB" else "Fair Value Gap ") + ("haussier" if long_ else "baissier")
         ok = [_check_text(k, s, long_) for k in SCORED if s.checks.get(k)]
         miss = [_acc(CHECK_LABELS[k].split(" (")[0]) for k in SCORED if not s.checks.get(k)]
-        lines = [f"🧠 <b>Analyse · {html.escape(s.display)} · {_tf(s.tf)}</b>", "",
+        ctx_line = []
+        if prof and s.ctx:
+            kind = "Order Block" if s.ctx.get("kind") == "OB" else "Fair Value Gap"
+            ctx_line = [f"Le prix touche une zone {html.escape(str(s.ctx.get('tf', 'H4')))} encore active : {kind} "
+                        f"{'haussier' if long_ else 'baissier'} <code>{f(s.ctx['lo'])} – {f(s.ctx['hi'])}</code>."]
+        tag = f" · {PROFILE_TAGS[s.profile]}" if prof else ""
+        lines = [f"🧠 <b>Analyse · {html.escape(s.display)} · {_tf(s.tf)}{tag}</b>", "",
                  "<b>Contexte</b>",
                  f"Tendance {htf} {'haussière' if long_ else 'baissière'} : moyennes 50 / 200 alignées, prix "
-                 f"{'au-dessus' if long_ else 'en dessous'} de la moyenne 200.", "",
+                 f"{'au-dessus' if long_ else 'en dessous'} de la moyenne 200.", *ctx_line, "",
                  "<b>Zone d'entrée</b>",
                  f"{zone} <code>{f(s.zone_lo)} – {f(s.zone_hi)}</code> ({_len_txt(s, abs(s.zone_hi - s.zone_lo))}) : "
                  f"retest frais, bougie de rejet confirmée à la clôture de {s.signal_time[11:16]} UTC.", "",
@@ -413,6 +421,10 @@ class Publisher:
                   "• 40 % à TP1 (puis stop à l'entrée) · 30 % à TP2 · 30 % à TP3",
                   "• Signal valable tant que le prix reste proche de l'entrée (moins de 0,35 R d'écart)",
                   "• Risque conseillé : 1 % du capital maximum par trade"]
+        if prof:                                                      # court terme : duree de vie plus courte, bilan a part
+            hours = 48 * int(s.tf.rstrip("m")) / 60
+            lines += [f"• Clôturé au temps après {hours:.0f} h au plus",
+                      "• Signal court terme : ses résultats sont suivis à part de ceux des signaux H4"]
         return "\n".join(lines)
 
     def post_signal(self, s: Signal, img_path: str, digits: int) -> Optional[int]:

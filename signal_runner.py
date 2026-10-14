@@ -67,7 +67,7 @@ _stats = {"ok": 0, "fail": 0}
 #  - SIGNALS_QUIET_LOG=1 : paire / sens / score des signaux absents de la sortie des journaux GitHub
 STATE_KEY = os.environ.get("SIGNALS_STATE_KEY", "").strip()
 QUIET_LOG = str(os.environ.get("SIGNALS_QUIET_LOG", "")).strip().lower() in ("1", "true", "yes")
-PRIVATE_KEYS = ("active", "last_signal")
+PRIVATE_KEYS = ("active", "last_signal", "active_scalp")
 _PRIV_SEEN: dict = {}            # dernier bloc prive lu (texte canonique -> jeton chiffre) : evite de re-chiffrer, donc un commit, sans changement
 
 
@@ -161,7 +161,7 @@ def load_history() -> List[dict]:
 
 def scoped_history(pubs: tuple) -> List[dict]:
     """Historique a annoncer : quand le VIP est en direct, seulement les trades reellement publies aux membres (pas les apercus)."""
-    hist = load_history()
+    hist = [r for r in load_history() if not r.get("profile")]       # les signaux scalp / intraday ont leur propre bilan
     return [r for r in hist if r.get("mode") == "live"] if pubs[0].live else hist
 
 
@@ -338,9 +338,10 @@ def publish_signal(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pubs: t
 
 
 # ------------------------------------------------------------------ suivi des signaux actifs
-def update_active(st: dict, pubs: tuple, cfg: dict) -> None:
+def update_active(st: dict, pubs: tuple, cfg: dict, key: str = "active") -> None:
+    """key : "active" (signaux de l'analyse H4) ou "active_scalp" (voie scalp / intraday, suivie a part)."""
     pub_vip, pub_pub = pubs
-    for sid, rec in list(st["active"].items()):
+    for sid, rec in list(st[key].items()):
         sig = Signal.from_dict(rec["signal"])
         sim = TradeSim.from_dict(rec["sim"])
         bars = get_rates(sig.symbol, "5m", 3000)
@@ -375,8 +376,8 @@ def update_active(st: dict, pubs: tuple, cfg: dict) -> None:
                             "score": sig.score, "signal_time": sig.signal_time, "entry": sig.entry, "sl": sig.sl,
                             "tps": sig.tps, "outcome": sim.outcome, "r": round(sim.r, 3),
                             "close_time": sim.close_time, "mode": rec.get("mode", "preview"),
-                            "public": bool(rec.get("public_msg_id"))})
-            del st["active"][sid]
+                            "public": bool(rec.get("public_msg_id")), "tf": sig.tf, "profile": sig.profile})
+            del st[key][sid]
             logp("[CLOTURE] trade clos", f"{sig.display} {sim.outcome} {sim.r:+.2f}R")
 
 
@@ -466,10 +467,12 @@ def status_text(st: dict, now: pd.Timestamp) -> str:
         sg = rec.get("signal", {})
         if sg:
             lines.append(f"  • {sg.get('display', '?')} — {'achat' if sg.get('direction') == 'LONG' else 'vente'}")
-    hist = load_history()
+    all_hist = load_history()
+    hist = [r for r in all_hist if not r.get("profile")]      # signaux de l'analyse H4 ; la voie scalp a son propre bilan
     lines += ["", "Depuis le lancement : " + _stats_line(hist) if hist else ""]
-    try:                                                      # positions virtuelles (observation) : message PRIVE, jamais publie
+    try:                                                      # voie scalp et positions virtuelles (observation) : message PRIVE, jamais publie
         if signal_mtf is not None:
+            lines += signal_mtf.lane_lines(st, all_hist, now)
             lines += signal_mtf.status_lines(st)
     except Exception:
         pass
@@ -689,15 +692,112 @@ def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         save_state(st)
 
 
+# ------------------------------------------------------------------ voie scalp (M15 / M30 / H1 dans les zones H4) et observation
+def choose_scalp(cands: list, st: dict, now: pd.Timestamp) -> list:
+    """Voie scalp : plafonds propres (par jour, simultanes), UN seul signal a la fois par symbole (signaux H4 compris), exposition par
+    devise comptee avec les signaux H4. Les plus confirmes d'abord ; a score egal, le timeframe le plus eleve."""
+    day = str(now.date())
+    act = st.setdefault("active_scalp", {})
+    n_today = st.setdefault("per_day_scalp", {}).get(day, 0)
+    syms = {rec["signal"]["symbol"] for rec in list(act.values()) + list(st["active"].values())}
+    net = net_exposure({**st["active"], **act})
+    per_day, max_active = int(signal_mtf.lane_param("max_per_day")), int(signal_mtf.lane_param("max_active"))
+    chosen = []
+    for c in sorted(cands, key=lambda c: (-c[0].score, -int(c[0].tf.rstrip("m")), c[0].risk / c[0].atr)):
+        s = c[0]
+        why = None
+        if s.symbol in syms:
+            why = "un signal est deja actif sur ce symbole"
+        elif n_today + len(chosen) >= per_day:
+            why = f"plafond scalp du jour atteint ({per_day})"
+        elif len(act) + len(chosen) >= max_active:
+            why = "trop de scalps actifs"
+        else:
+            for k, v in exposures(s.display, s.direction).items():
+                if abs(net.get(k, 0) + v) > MAX_NET_EXPOSURE:
+                    why = f"exposition {k} deja au maximum"
+                    break
+        if why:
+            logp("[SKIP] scalp ecarte", f"{s.display} {s.direction} score {s.score}/7 : {why}")
+            continue
+        chosen.append(c)
+        syms.add(s.symbol)
+        for k, v in exposures(s.display, s.direction).items():
+            net[k] = net.get(k, 0) + v
+    return chosen
+
+
+def publish_scalp(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pubs: tuple, cfg: dict, mode: str) -> bool:
+    """mode 'live' : fiche + analyse dans le groupe VIP, suivie a part (active_scalp). Jamais dans le groupe public.
+    mode 'preview' : la MEME fiche, mais seulement dans le chat prive du proprietaire (silencieuse), et la position est suivie en virtuel."""
+    OUT_DIR.mkdir(exist_ok=True)
+    img = OUT_DIR / f"{sig.id}.png"
+    render_signal_chart(df1, sig, str(img), digits=meta["digits"], brand=cfg["brand"])
+    now = utc_now()
+    day = str(now.date())
+    if mode == "live":
+        pub = pubs[0]
+        mid = pub.post_signal(sig, str(img), meta["digits"])
+        if mid is None:
+            log(f"[PUB] ECHEC publication scalp {sig.id} (Telegram) - non enregistre")
+            return False
+        st.setdefault("active_scalp", {})[sig.id] = {"signal": sig.to_dict(), "sim": TradeSim(sig).to_dict(), "msg_id": mid,
+                                                      "public_msg_id": None, "digits": meta["digits"], "published": now.isoformat(),
+                                                      "mode": "live" if pub.live else "preview"}
+    else:
+        Publisher({**cfg, "live": False}, log=log, audience="vip").post_signal(sig, str(img), meta["digits"])
+        signal_mtf.register(sig, st, now)
+    st.setdefault("per_day_scalp", {})[day] = st.setdefault("per_day_scalp", {}).get(day, 0) + 1
+    logp(f"[SCALP] {'VIP LIVE' if mode == 'live' else 'APERCU prive'}", f"{sig.display} {sig.direction} {sig.profile} score {sig.score}/7")
+    return True
+
+
+def _scalp_lane(st: dict, cfg: dict, pubs: tuple, cands: list, now: pd.Timestamp) -> None:
+    """Candidats de la voie scalp -> controle de fraicheur (comme les signaux H4) -> plafonds -> publication."""
+    mode = signal_mtf.lane_mode()
+    fresh = []
+    for sig, df, meta in cands:
+        reason = is_fresh(sig, now, cfg)
+        if reason:
+            logp("[SKIP] scalp ecarte", f"{sig.display} {sig.direction} {sig.score}/7 : {reason}")
+            continue
+        fresh.append((sig, df, meta))
+    for sig, df, meta in choose_scalp(fresh, st, now):
+        publish_scalp(sig, df, meta, st, pubs, cfg, mode)
+
+
+def _scalp_notices(st: dict, pubs: tuple, now: pd.Timestamp, lane: dict) -> None:
+    """Messages PRIVES au proprietaire (une seule fois chacun) : disjoncteur declenche ; bilan hebdomadaire des scalps publies, dans le VIP."""
+    if signal_mtf.lane_profiles() and not lane["open"] and lane["reason"] == "breaker" and st["sched"].get("scalp_breaker") != lane["n"]:
+        st["sched"]["scalp_breaker"] = lane["n"]
+        pubs[0].notify_owner(f"⛔ <b>Voie scalp arrêtée automatiquement</b>\n{lane['n']} trades publiés, total {lane['total_r']:+.1f} R : "
+                             "le disjoncteur s'est déclenché. Les scalps continuent en observation seulement (rien n'est publié). "
+                             "Dis-moi si tu veux reprendre.", silent=False)
+    if now.weekday() == 4 and now.hour * 60 + now.minute >= 21 * 60 + 30:
+        wkey = f"{now.isocalendar()[0]}-W{now.isocalendar()[1]}"
+        if st["sched"].get("scalp_week") != wkey:
+            hist = [r for r in load_history() if r.get("profile") and r.get("mode") == "live"]
+            wk = [r for r in hist if pd.Timestamp(r["close_time"]) >= (now - pd.Timedelta(days=now.weekday())).normalize()]
+            if not hist or pubs[0].send_text(f"⚡ <b>Bilan des scalps de la semaine</b>\nSemaine : {_stats_line(wk)}\nCumul : {_stats_line(hist)}\n"
+                                              "Les gains comme les pertes.", notify=False):
+                st["sched"]["scalp_week"] = wkey
+
+
 def _observation(st: dict, cfg: dict, pubs: tuple, ids: List[str], now: pd.Timestamp, t_cycle: float) -> None:
-    """Analyse multi-timeframes EN OBSERVATION : positions virtuelles M15 / M30 / H1 dans les zones H4. Ne publie RIEN dans un groupe ;
-    ne peut JAMAIS gener le robot principal (toute erreur est ignoree, budget de temps limite)."""
+    """Analyse multi-timeframes : positions virtuelles M15 / M30 / H1 dans les zones H4 (rien n'est publie) et, si elle est allumee,
+    voie scalp (apercu prive ou groupe VIP). Ne peut JAMAIS gener le robot principal (toute erreur est ignoree, budget de temps limite)."""
     if signal_mtf is None:
         return
     try:
-        if signal_mtf.enabled_profiles():
+        if signal_mtf.enabled_profiles() or signal_mtf.lane_profiles():
             save_state(st)                                     # point de reprise : si le cycle etait coupe pendant l'observation, le travail du robot principal est deja enregistre
-        signal_mtf.observe(st, cfg, now, ids, t_cycle=t_cycle, log=log, logp=logp)
+        history = load_history()
+        lane = signal_mtf.lane_state(history, now)
+        cands = signal_mtf.observe(st, cfg, now, ids, t_cycle=t_cycle, log=log, logp=logp, lane=lane)
+        if cands:
+            _scalp_lane(st, cfg, pubs, cands, now)
+        if signal_mtf.lane_profiles():
+            _scalp_notices(st, pubs, now, lane)
         day = str(now.date())
         if now.weekday() < 5 and now.hour * 60 + now.minute >= 21 * 60 + 30 and st["sched"].get("mtf_digest") != day:
             st["sched"]["mtf_digest"] = day                    # un seul bilan prive par jour, apres 21h30 UTC
@@ -721,6 +821,11 @@ def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         update_active(st, pubs, cfg)
     except Exception as e:                                    # un suivi en erreur ne bloque pas le scan
         log(f"[SUIVI] erreur : {e} | {traceback.format_exc()[-300:]!r}")
+    try:
+        if st.get("active_scalp"):                            # voie scalp : suivie a part, jamais melangee aux signaux H4
+            update_active(st, pubs, cfg, key="active_scalp")
+    except Exception as e:
+        log(f"[SUIVI] scalp : erreur {e} | {traceback.format_exc()[-300:]!r}")
     cands = []
     for sid in ids:
         try:

@@ -1,16 +1,24 @@
 """
-signal_mtf.py - Analyse MULTI-TIMEFRAMES en MODE OBSERVATION : rien n'est publie, jamais.
+signal_mtf.py - Analyse MULTI-TIMEFRAMES : positions virtuelles (observation) et "voie scalp" (signaux M15 / M30 / H1 dans les zones H4).
 
-L'analyse H4 d'origine (biais journalier + retest d'une zone H4 + bougie de rejet) reste la SEULE a etre publiee, inchangee.
-En plus, le robot utilise des timeframes plus petits (M15, M30, H1) pour chercher des entrees de scalp / intraday DANS les zones H4 encore
-actives, dans le sens de la tendance journaliere. Ces positions sont prises EN VIRTUEL : chaque trade est suivi comme un vrai signal
-(TP1 / TP2 / TP3 / stop, memes regles de simulation, memes donnees que le robot en cloud) et son resultat est ecrit dans
-signals_shadow.jsonl. Le proprietaire recoit un bilan PRIVE ; aucun groupe ne recoit quoi que ce soit.
+L'analyse H4 d'origine (biais journalier + retest d'une zone H4 + bougie de rejet) reste inchangee et garde sa propre voie de publication.
+En plus, le robot utilise des timeframes plus petits (M15, M30, H1) pour chercher des entrees DANS les zones H4 encore actives, dans le sens
+de la tendance journaliere. Ce que fait chaque entree trouvee :
+  * OBSERVATION : position VIRTUELLE, suivie comme un vrai signal (TP1 / TP2 / TP3 / stop, memes regles, memes donnees que le robot cloud),
+    resultat dans signals_shadow.jsonl ; le proprietaire recoit un bilan PRIVE. Rien n'est publie.
+  * VOIE SCALP (optionnelle, desactivee par defaut) : si le profil est autorise ET si le setup est tres confirme (score >= 5), il est propose a
+    la publication : d'abord en APERCU dans le chat prive du proprietaire, puis - sur sa decision - dans le groupe VIP. Plafonds quotidiens,
+    suivi et bilan a part de ceux des signaux H4, et DISJONCTEUR automatique si les pertes s'accumulent.
 
-Pourquoi : les tests sur l'historique (signal_backtest_ltf.py) ne montrent AUCUN avantage a ces timeframes ; le seul moyen honnete de savoir
-si l'un d'eux merite un jour d'etre publie est de le regarder travailler en conditions reelles, sur des mois, sans risque pour personne.
+Pourquoi cette prudence : les tests sur l'historique (signal_backtest_ltf.py) ne montrent AUCUN avantage a ces timeframes (le spread pese plus
+sur les petits stops) ; la voie scalp existe pour garder le groupe vivant, avec des resultats toujours publies, pas parce qu'elle est prouvee.
 
-Interrupteur : variable SIGNALS_OBSERVE (liste separee par des virgules, ou off). Defaut : scalp_m15, scalp_m30, intra_h1.
+Reglages (fichier control.json de la branche data, relu a chaque cycle ; sinon variables d'environnement) :
+  scalp_profiles : liste (scalp_m15, scalp_m30, intra_h1) ou off        [defaut : aucun = voie scalp eteinte]
+  scalp_mode     : "preview" (chat prive) ou "live" (groupe VIP)         [defaut : preview]
+  scalp_since    : date ISO ; seuls les trades LIVE clotures apres cette date comptent pour le disjoncteur (remise a zero manuelle)
+  scalp_min_score, scalp_max_per_day, scalp_max_active, scalp_day_floor_r, scalp_breaker_min_trades, scalp_breaker_total_r
+Observation : variable SIGNALS_OBSERVE (liste ou off ; defaut : les 3 profils).
 Ce module ne leve jamais d'exception vers le robot et respecte un budget de temps : le robot principal passe toujours avant.
 """
 from __future__ import annotations
@@ -28,6 +36,7 @@ from signal_engine import Signal, TradeSim, analyze, htf_bias, htf_zones_of, sum
 DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("SIGNALS_DATA_DIR") or DIR)
 SHADOW_FILE = DATA_DIR / "signals_shadow.jsonl"
+CONTROL_FILE = DATA_DIR / "control.json"
 
 # nom -> timeframe d'entree, timeframe du biais de tendance, timeframe des zones exigees (le contexte de l'analyse H4)
 PROFILES: Dict[str, dict] = {
@@ -43,16 +52,53 @@ ABANDON_DAYS = 5                          # une position virtuelle sans donnees 
 BUDGET_S = 110.0                          # temps maximum d'un passage d'observation au sein d'un cycle (le cycle complet est limite a 280 s)
 MIN_N_VERDICT = 100                       # sous ce nombre de trades clotures, aucun verdict
 
+# voie scalp : valeurs par defaut (modifiables dans control.json, prefixe "scalp_")
+LANE = dict(min_score=5, max_per_day=3, max_active=3, day_floor_r=-3.0, breaker_min_trades=12, breaker_total_r=-4.0)
+
 _ZONES: Dict[tuple, object] = {}          # zones H4 par (symbole, timeframe, derniere bougie) : calculees une seule fois par processus
+
+
+# ------------------------------------------------------------------ reglages
+def control() -> dict:
+    try:
+        d = json.loads(CONTROL_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _names(raw, allowed) -> List[str]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        if raw.strip().lower() in ("", "off", "none", "non", "0", "false", "no"):
+            return []
+        raw = raw.split(",")
+    return [str(p).strip() for p in raw if str(p).strip() in allowed]
 
 
 def enabled_profiles() -> List[str]:
     raw = os.environ.get("SIGNALS_OBSERVE")
     if raw is None or not raw.strip():
         return list(DEFAULT_OBSERVE)
-    if raw.strip().lower() in ("off", "none", "non", "0", "false", "no"):
-        return []
-    return [p.strip() for p in raw.split(",") if p.strip() in PROFILES]
+    return _names(raw, PROFILES)
+
+
+def lane_profiles() -> List[str]:
+    """Profils autorises dans la voie scalp (publication). Vide = voie eteinte."""
+    c = control()
+    return _names(c["scalp_profiles"] if "scalp_profiles" in c else os.environ.get("SIGNALS_SCALP_PROFILES"), PROFILES)
+
+
+def lane_mode() -> str:
+    """'live' (groupe VIP) seulement si le reglage le dit EXPLICITEMENT ; sinon 'preview' (chat prive du proprietaire)."""
+    c = control()
+    raw = c["scalp_mode"] if "scalp_mode" in c else os.environ.get("SIGNALS_SCALP_MODE", "")
+    return "live" if str(raw).strip().lower() == "live" else "preview"
+
+
+def lane_param(name: str):
+    return control().get("scalp_" + name, LANE[name])
 
 
 def _state(st: dict) -> dict:
@@ -60,6 +106,26 @@ def _state(st: dict) -> dict:
     for k in ("last_bar", "next_check", "active", "per_day"):
         m.setdefault(k, {})
     return m
+
+
+# ------------------------------------------------------------------ disjoncteur de la voie scalp
+def lane_state(rows: List[dict], now: pd.Timestamp) -> dict:
+    """rows : trades de l'historique (tous). Seuls comptent les trades scalp / intraday LIVE clotures depuis `scalp_since`.
+    Retourne {'open': bool, 'reason': 'ok' | 'breaker' | 'day_floor', 'n', 'total_r', 'day_r'}. Aucune exception."""
+    try:
+        since = str(control().get("scalp_since") or "")
+        mine = [r for r in rows if r.get("profile") and r.get("mode") == "live" and str(r.get("close_time", "")) >= since]
+        total = sum(float(r["r"]) for r in mine)
+        today = str(now.date())
+        day_r = sum(float(r["r"]) for r in mine if str(r.get("close_time", ""))[:10] == today)
+        out = {"open": True, "reason": "ok", "n": len(mine), "total_r": total, "day_r": day_r}
+        if len(mine) >= int(lane_param("breaker_min_trades")) and total <= float(lane_param("breaker_total_r")):
+            out.update(open=False, reason="breaker")
+        elif day_r <= float(lane_param("day_floor_r")):
+            out.update(open=False, reason="day_floor")
+        return out
+    except Exception:
+        return {"open": False, "reason": "erreur", "n": 0, "total_r": 0.0, "day_r": 0.0}        # dans le doute, la voie reste fermee
 
 
 # ------------------------------------------------------------------ recherche d'entrees
@@ -72,8 +138,9 @@ def _zones(sid: str, cls: str, meta: dict, zone_tf: str, dz: pd.DataFrame):
     return _ZONES[key]
 
 
-def scan_profile(sid: str, cls: str, name: str, st: dict, now: pd.Timestamp, min_score: int) -> List[Signal]:
-    """Signaux formes sur les bougies cloturees depuis le dernier passage (meme logique de rattrapage que le robot principal)."""
+def scan_profile(sid: str, cls: str, name: str, st: dict, now: pd.Timestamp, min_score: int) -> List[tuple]:
+    """[(signal, bougies d'entree, meta), ...] : signaux formes sur les bougies cloturees depuis le dernier passage (meme logique de
+    rattrapage que le robot principal)."""
     prof = PROFILES[name]
     m = _state(st)
     key = f"{sid}|{name}"
@@ -108,7 +175,7 @@ def scan_profile(sid: str, cls: str, name: str, st: dict, now: pd.Timestamp, min
         new = [s for s in sigs if pd.Timestamp(s.bar_open) > pt]
     m["last_bar"][key] = last.isoformat()
     m["next_check"][key] = (last + pd.Timedelta(minutes=2 * tfm + 1)).isoformat()
-    return sorted(new, key=lambda s: s.bar_open)
+    return [(s, df, meta) for s in sorted(new, key=lambda x: x.bar_open)]
 
 
 def is_fresh(sig: Signal, now: pd.Timestamp) -> bool:
@@ -193,11 +260,17 @@ def update_shadow(st: dict, now: pd.Timestamp, deadline: Optional[float] = None)
 
 # ------------------------------------------------------------------ passage complet (appele par le robot a chaque cycle)
 def observe(st: dict, cfg: dict, now: pd.Timestamp, ids: List[str], t_cycle: Optional[float] = None,
-            log: Callable[[str], None] = print, logp: Optional[Callable[[str, str], None]] = None) -> None:
-    """Un passage d'observation. NE LEVE JAMAIS d'exception et s'arrete si le budget de temps est depasse."""
-    profiles = enabled_profiles()
-    if not profiles:
-        return
+            log: Callable[[str], None] = print, logp: Optional[Callable[[str, str], None]] = None,
+            lane: Optional[dict] = None) -> List[tuple]:
+    """Un passage : suit les positions virtuelles, cherche de nouvelles entrees sur les profils actifs, ouvre les positions virtuelles.
+    Retourne les CANDIDATS de la voie scalp [(signal, bougies, meta), ...] (profil autorise, score suffisant, disjoncteur ferme = aucun) :
+    c'est le robot qui decide de les publier. NE LEVE JAMAIS d'exception et s'arrete si le budget de temps est depasse."""
+    candidates: List[tuple] = []
+    observe_on = enabled_profiles()
+    lane_on = lane_profiles()
+    scan = list(dict.fromkeys(observe_on + lane_on))
+    if not scan:
+        return candidates
     logp = logp or (lambda msg, detail: log(f"{msg} : {detail}"))
     t0 = t_cycle if t_cycle is not None else time.time()
     try:
@@ -205,6 +278,8 @@ def observe(st: dict, cfg: dict, now: pd.Timestamp, ids: List[str], t_cycle: Opt
     except Exception as e:
         log(f"[MTF] suivi : erreur ignoree ({type(e).__name__}: {e})")
     min_score = int(cfg.get("min_score", 4))
+    lane_min = int(lane_param("min_score"))
+    lane_open = bool(lane and lane.get("open"))
     from signal_data import UNIVERSE
     n_new = 0
     for sid in ids:
@@ -212,16 +287,21 @@ def observe(st: dict, cfg: dict, now: pd.Timestamp, ids: List[str], t_cycle: Opt
             log("[MTF] budget de temps atteint : le reste au prochain cycle")
             break
         cls = UNIVERSE[sid]["cls"]
-        for name in profiles:
+        for name in scan:
             try:
-                for sig in scan_profile(sid, cls, name, st, now, min_score):
-                    if is_fresh(sig, now) and register(sig, st, now):
+                for sig, df, meta in scan_profile(sid, cls, name, st, now, min(min_score, lane_min) if name in lane_on else min_score):
+                    if not is_fresh(sig, now):
+                        continue
+                    if name in lane_on and lane_open and sig.score >= lane_min:
+                        candidates.append((sig, df, meta))                         # voie scalp : le robot decide
+                    elif name in observe_on and sig.score >= min_score and register(sig, st, now):
                         n_new += 1
                         logp("[MTF] position virtuelle", f"{sig.display} {sig.direction} {PROFILES[name]['label']} score {sig.score}")
             except Exception as e:
                 log(f"[MTF] {name} erreur ignoree ({type(e).__name__}: {e})")
     if n_new:
         log(f"[MTF] {n_new} nouvelle(s) position(s) virtuelle(s) - {len(_state(st)['active'])} ouverte(s)")
+    return candidates
 
 
 # ------------------------------------------------------------------ bilans (prives)
@@ -259,6 +339,25 @@ def status_lines(st: dict, rows: Optional[List[dict]] = None) -> List[str]:
     total = sum(s.get("n", 0) for s in stats.values())
     if total < MIN_N_VERDICT:
         lines.append(f"Trop tôt pour conclure : il faut au moins {MIN_N_VERDICT} trades terminés par timeframe.")
+    return lines
+
+
+def lane_lines(st: dict, history: List[dict], now: pd.Timestamp) -> List[str]:
+    """Lignes /etat sur la voie scalp (PRIVE)."""
+    names = lane_profiles()
+    if not names:
+        return []
+    ls = lane_state(history, now)
+    labels = " + ".join(PROFILES[n]["label"] for n in names)
+    mode = "groupe VIP" if lane_mode() == "live" else "aperçu dans ton chat privé seulement"
+    lines = ["", f"<b>Voie scalp</b> : {labels} — {mode}"]
+    if not ls["open"]:
+        lines.append("⛔ Voie fermée : " + ("disjoncteur déclenché (pertes cumulées trop importantes)" if ls["reason"] == "breaker"
+                                          else "perte maximale du jour atteinte" if ls["reason"] == "day_floor" else "erreur de lecture"))
+    mine = [r for r in history if r.get("profile") and r.get("mode") == "live"]
+    s = summarize([{"r": r["r"], "outcome": r["outcome"]} for r in mine])
+    if s.get("n"):
+        lines.append(f"• Publiés : {s['n']} trades · TP1 {s['tp1']:.0f} % · stops {s['sl']:.0f} % · {s['total_r']:+.1f} R")
     return lines
 
 
