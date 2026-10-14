@@ -1,5 +1,5 @@
 {
   "scalp_profiles": ["scalp_m15", "scalp_m30", "intra_h1"],
   "scalp_mode": "live",
-  "nfp_mode": "preview"
+  "nfp_mode": "live"
 }
