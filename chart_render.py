@@ -25,7 +25,7 @@ TXT, WHITE, MUTED, DIM = "#e8ebf0", "#f4f6f9", "#8a93a1", "#4b5462"
 GOLD, GOLD_L = "#d4af37", "#f1d67c"
 UP, DOWN = "#26a69a", "#ef5350"                 # bougies (standard plateformes)
 GREEN, RED, BLUE = "#2ecc71", "#ef4444", "#38bdf8"
-TF_LABEL = {"1m": "M1", "5m": "M5", "15m": "M15", "60m": "H1", "240m": "H4"}
+TF_LABEL = {"1m": "M1", "5m": "M5", "15m": "M15", "30m": "M30", "60m": "H1", "240m": "H4"}
 
 # ------------------------------------------------------------------ outils de mise en page
 _IMG: dict = {}

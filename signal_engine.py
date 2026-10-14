@@ -101,13 +101,16 @@ class Signal:
     rsi: float
     poc: Optional[float] = None
     id: str = ""
+    profile: str = ""           # "" = analyse d'origine (swing H4) ; "scalp" = entree M15 dans une zone H4 encore active
+    ctx: dict = field(default_factory=dict)   # contexte multi-timeframes : zone du timeframe superieur {"tf", "kind", "lo", "hi"}
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @staticmethod
     def from_dict(d: dict) -> "Signal":
-        return Signal(**d)
+        known = Signal.__dataclass_fields__          # tolerant : un champ inconnu (etat ecrit par une autre version) est ignore
+        return Signal(**{k: v for k, v in d.items() if k in known})
 
 
 # ------------------------------------------------------------------ indicateurs
@@ -140,13 +143,76 @@ def htf_bias(df_htf: pd.DataFrame, entry_index: pd.DatetimeIndex, entry_minutes:
     return np.where(pos >= 0, b[np.clip(pos, 0, None)], 0).astype(np.int8)
 
 
+# ------------------------------------------------------------------ zones d'un timeframe superieur (analyse multi-timeframes)
+class HtfZones:
+    """Zones OB / FVG d'un timeframe SUPERIEUR (ex. H4) avec leur duree de vie. Sert au scalp : on ne cherche une entree M15 que lorsque
+    le prix est DANS une zone H4 encore active, dans le sens de la tendance - c'est-a-dire dans le contexte de l'analyse H4 (inchangee).
+    Aucun regard vers le futur : une zone n'existe qu'a la CLOTURE de la bougie qui la cree, et disparait a la cloture de la bougie qui
+    l'invalide, qui la fait vieillir au-dela de son age maximum, ou qui marque son 2e retest (plus assez "fraiche")."""
+
+    def __init__(self, log: list, index: pd.DatetimeIndex, tf_minutes: int, label: str = "H4", max_touches: int = 2,
+                 max_age: Optional[int] = None):
+        td = pd.Timedelta(minutes=tf_minutes)
+        far = int(np.iinfo(np.int64).max)
+        rows = []
+        for z in log:
+            t0 = int((index[z["born"]] + td).value)
+            t1 = far
+            if z.get("dead_i") is not None:
+                t1 = min(t1, int((index[z["dead_i"]] + td).value))
+            if max_age is not None and z["born"] + max_age + 1 < len(index):       # age maximum : meme regle que le moteur, sans dependre de son elagage
+                t1 = min(t1, int((index[z["born"] + max_age + 1] + td).value))
+            touches = z.get("touch_i") or []
+            if len(touches) >= max_touches:                  # 2e retest atteint : la zone n'est plus fraiche
+                t1 = min(t1, int((index[touches[max_touches - 1]] + td).value))
+            if t1 > t0:
+                rows.append((z["dir"], z["lo"], z["hi"], t0, t1, z["kind"]))
+        self.label = label
+        self.dir = np.array([r[0] for r in rows], dtype=np.int8)
+        self.lo = np.array([r[1] for r in rows], dtype=float)
+        self.hi = np.array([r[2] for r in rows], dtype=float)
+        self.t0 = np.array([r[3] for r in rows], dtype=np.int64)
+        self.t1 = np.array([r[4] for r in rows], dtype=np.int64)
+        self.kind = [r[5] for r in rows]
+
+    def __len__(self) -> int:
+        return len(self.dir)
+
+    def find(self, d: int, t_ns: int, lo: float, hi: float) -> Optional[dict]:
+        """Zone active a l'instant t (ns), dans le sens d, que la fourchette [lo, hi] touche. La plus recente si plusieurs ; None sinon."""
+        if not len(self.dir):
+            return None
+        k = np.flatnonzero((self.dir == d) & (self.t0 <= t_ns) & (t_ns < self.t1) & (self.lo <= hi) & (self.hi >= lo))
+        if not len(k):
+            return None
+        j = int(k[-1])
+        return {"tf": self.label, "kind": self.kind[j], "lo": float(self.lo[j]), "hi": float(self.hi[j])}
+
+
+def htf_zones_of(df_htf: pd.DataFrame, tf_minutes: int, label: str = "H4", point: float = 0.0001, asset_class: str = "fx",
+                 params: Optional[dict] = None) -> Optional[HtfZones]:
+    """Zones d'un timeframe superieur, detectees par le MEME code que l'analyse d'origine (aucune regle dupliquee)."""
+    if df_htf is None or len(df_htf) < PARAMS["warmup"] + 10:
+        return None
+    log: list = []
+    analyze(df_htf, np.zeros(len(df_htf), dtype=np.int8), point, "HTF", "HTF", tf_minutes, asset_class, params=params, zone_log=log)
+    P = {**PARAMS, **(params or {})}
+    return HtfZones(log, df_htf.index, tf_minutes, label=label, max_touches=P["max_touches"], max_age=P["zone_max_age"])
+
+
 # ------------------------------------------------------------------ moteur
 def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, display: str,
             tf_minutes: int = 60, asset_class: str = "fx", params: Optional[dict] = None,
             only_last: bool = False, min_score: Optional[int] = None,
-            watch: Optional[list] = None) -> List[Signal]:
+            watch: Optional[list] = None, htf_zones: Optional[HtfZones] = None,
+            zone_log: Optional[list] = None, profile: str = "") -> List[Signal]:
     """df : index = ouverture de bougie (UTC naif) ; colonnes open high low close
-    tick_volume spread(points). bias : tableau aligne sur df (htf_bias)."""
+    tick_volume spread(points). bias : tableau aligne sur df (htf_bias).
+    Analyse multi-timeframes (optionnelle, ne change RIEN aux signaux d'origine quand elle n'est pas demandee) :
+      htf_zones : zones d'un timeframe superieur (voir HtfZones) ; avec params["require_htf_zone"]=True, un signal n'est emis que si
+                  la bougie d'entree touche une zone active de ce timeframe, dans le sens de la tendance (check "htf_zone" + contexte).
+      zone_log  : liste a remplir avec toutes les zones detectees et leur duree de vie (sert a construire HtfZones).
+      profile   : etiquette du profil de trading ("" = analyse d'origine ; "scalp" = entrees M15)."""
     P = {**PARAMS, **(params or {})}
     ms = P["min_score"] if min_score is None else min_score
     n = len(df)
@@ -181,6 +247,7 @@ def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, displ
 
     for i in range(2 * K + 2, n):
         a = atr[i]
+        nz0 = len(zones)                   # (pour le journal des zones : voir zone_log)
         # 1) swings confirmes (fractals)
         j = i - K
         if j - K >= 0:
@@ -238,6 +305,9 @@ def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, displ
                 zones.append(dict(kind="FVG", dir=-1, lo=h[i], hi=l[i - 2], born=i,
                                   touches=0, inz=False, dead=False, used=False, origin=i - 1))
 
+        if zone_log is not None and len(zones) > nz0:
+            zone_log.extend(zones[nz0:])   # zones nees sur cette bougie (OB / FVG)
+
         # 4) recherche de signal (AVANT la mise a jour des zones avec la bougie courante)
         if (i >= emit_from and bias_l[i] != 0 and (i - last_sig_i) >= P["cooldown_bars"]
                 and _market_ok(times[i] + tf_td, asset_class)):
@@ -275,22 +345,29 @@ def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, displ
                         continue
                     if spr[i] > P["max_spread_risk"] * risk:
                         continue
+                    hz = None                                    # analyse multi-timeframes : le prix est-il dans une zone active du timeframe superieur ?
+                    if htf_zones is not None:
+                        hz = htf_zones.find(d, int((times[i] + tf_td).value), l[i], h[i])
+                        if hz is None and P.get("require_htf_zone"):
+                            continue
                     chk = _score(z, zones, d, i, h, l, c, o, rsi, swing_hi, swing_lo, K,
                                  times[i] + tf_td, df, vol, a, P)
                     sc = sum(chk[k] for k in SCORED)
                     if sc < ms:
                         continue
-                    cand = (sc, -risk / a, z, chk, entry, sl, risk)
+                    cand = (sc, -risk / a, z, chk, entry, sl, risk, hz)
                     if best is None or cand[:2] > best[:2]:
                         best = cand
             if best is not None:
-                sc, _, z, chk, entry, sl, risk = best
+                sc, _, z, chk, entry, sl, risk, hz = best
                 z["used"] = True
                 last_sig_i = i
                 poc_v = chk.pop("_poc", None)
                 tps = [entry + d * r * risk for r in P["tp_rr"]]
                 allchk = {"htf_trend": True, "zone_retest": True, "confirmation": True,
                           "risk_ok": True, **chk}
+                if htf_zones is not None:
+                    allchk["htf_zone"] = hz is not None
                 sig_close = times[i] + tf_td
                 out.append(Signal(
                     symbol=symbol, display=display, direction="LONG" if d == 1 else "SHORT",
@@ -299,7 +376,8 @@ def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, displ
                     grade="A+" if sc >= P["a_plus_score"] else "A", checks=allchk,
                     zone_kind=z["kind"], zone_lo=z["lo"], zone_hi=z["hi"],
                     zone_born=times[z["born"]].isoformat(), rsi=rsi[i], poc=poc_v,
-                    id=f"{display}-{sig_close:%Y%m%d%H%M}-{'L' if d == 1 else 'S'}"))
+                    id=f"{display}-{sig_close:%Y%m%d%H%M}-{'L' if d == 1 else 'S'}" + (f"-{profile}" if profile else ""),
+                    profile=profile, ctx=dict(hz) if hz else {}))
 
         # 5) mise a jour des zones avec la bougie courante
         for z in zones:
@@ -307,21 +385,26 @@ def analyze(df: pd.DataFrame, bias: np.ndarray, point: float, symbol: str, displ
                 continue
             if i - z["born"] > P["zone_max_age"]:
                 z["dead"] = True
+                z["dead_i"] = i
                 continue
             if z["dir"] == 1:
                 tapped = i > z["born"] and l[i] <= z["hi"]
                 if tapped and not z["inz"]:
                     z["touches"] += 1
+                    z.setdefault("touch_i", []).append(i)
                 z["inz"] = tapped
                 if c[i] < z["lo"]:
                     z["dead"] = True
+                    z["dead_i"] = i
             else:
                 tapped = i > z["born"] and h[i] >= z["lo"]
                 if tapped and not z["inz"]:
                     z["touches"] += 1
+                    z.setdefault("touch_i", []).append(i)
                 z["inz"] = tapped
                 if c[i] > z["hi"]:
                     z["dead"] = True
+                    z["dead_i"] = i
         if len(zones) > 60:
             zones = [z for z in zones if not z["dead"]][-40:]
 

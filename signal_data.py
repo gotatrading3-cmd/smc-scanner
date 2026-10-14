@@ -78,8 +78,8 @@ for _p in _FX_EXTRA:
 # compat backtest : nom MT5 -> (id public, classe)
 WATCHLIST: Dict[str, Tuple[str, str]] = {v["mt5"]: (k, v["cls"]) for k, v in UNIVERSE.items()}
 
-TF_MIN = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
-TF_LABEL = {1: "M1", 5: "M5", 15: "M15", 60: "H1", 240: "H4", 1440: "D1"}
+TF_MIN = {"1m": 1, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "4h": 240, "1d": 1440}
+TF_LABEL = {1: "M1", 5: "M5", 15: "M15", 30: "M30", 60: "H1", 240: "H4", 1440: "D1"}
 
 
 FUTURES_OFF = os.environ.get("SIGNALS_FUTURES", "").strip().lower() in ("off", "0", "false", "no")   # interrupteur : or + indices
@@ -132,7 +132,7 @@ def _mt5mod():
 
 def _tf_const(tf_key: str):
     m = _mt5mod()
-    return {"1m": m.TIMEFRAME_M1, "5m": m.TIMEFRAME_M5, "15m": m.TIMEFRAME_M15,
+    return {"1m": m.TIMEFRAME_M1, "5m": m.TIMEFRAME_M5, "15m": m.TIMEFRAME_M15, "30m": m.TIMEFRAME_M30,
             "1h": m.TIMEFRAME_H1, "4h": m.TIMEFRAME_H4, "1d": m.TIMEFRAME_D1}[tf_key]
 
 
@@ -389,7 +389,7 @@ def _yahoo_rates(sym: str, tf_key: str, count: int, closed_only: bool) -> Option
         return None
     if tf_key == "5m":
         df = _yf_fetch(tk, "5m", "30d")
-    elif tf_key == "15m":
+    elif tf_key in ("15m", "30m"):                              # M30 = deux bougies M15 regroupees (memes heures qu'au courtier : :00 et :30)
         df = _yf_fetch(tk, "15m", "60d")
     elif tf_key in ("1h", "4h"):
         df = _yf_fetch(tk, "1h", "730d")
@@ -405,6 +405,8 @@ def _yahoo_rates(sym: str, tf_key: str, count: int, closed_only: bool) -> Option
             return None
     if tf_key == "4h":
         df = _resample(df, 240)
+    elif tf_key == "30m":
+        df = _resample(df, 30)
     df = df.tail(count).copy()
     if closed_only:
         df = df[df.index + pd.Timedelta(minutes=TF_MIN[tf_key]) <= utc_now()]

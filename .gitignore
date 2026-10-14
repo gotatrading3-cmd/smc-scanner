@@ -32,6 +32,9 @@ signal_out/
 signal_cache/
 signal_backtest_report*.txt
 signal_backtest_summary*.json
+signal_backtest_ltf_*
+basis_cache.json
+signals_shadow.jsonl
 STRATEGIE_SIGNAUX.md
 
 # Python

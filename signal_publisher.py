@@ -124,7 +124,7 @@ def _pf(p: float, digits: int) -> str:
 
 
 def _tf(tf: str) -> str:
-    return {"15m": "M15", "60m": "H1", "240m": "H4"}.get(tf, tf)
+    return {"15m": "M15", "30m": "M30", "60m": "H1", "240m": "H4"}.get(tf, tf)
 
 
 def _len_txt(s: Signal, d: float) -> str:
@@ -225,10 +225,13 @@ class Publisher:
         self.log(f"[PUB] {method} refuse : {j.get('description', '?')}")
         return None
 
-    def notify_owner(self, text: str) -> None:
+    def notify_owner(self, text: str, silent: bool = False) -> None:
         """Message technique au PROPRIETAIRE uniquement (jamais a un groupe), ex. panne de la source de prix."""
         if self.token and self.owner_chat:
-            self._api("sendMessage", {"chat_id": self.owner_chat, "text": text, "parse_mode": "HTML"})
+            data = {"chat_id": self.owner_chat, "text": text, "parse_mode": "HTML"}
+            if silent:
+                data["disable_notification"] = "true"
+            self._api("sendMessage", data)
 
     def poll_owner_commands(self, st: dict, reply) -> None:
         """Repond aux messages envoyes par le PROPRIETAIRE en prive (ex. /etat) : verifie a chaque cycle (le cloud tourne

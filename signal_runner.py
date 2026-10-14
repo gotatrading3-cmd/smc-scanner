@@ -38,6 +38,10 @@ from signal_engine import Signal, TradeSim, analyze, htf_bias, summarize
 from signal_publisher import Publisher, load_cfg, save_cfg, pinned_text, CHANNEL_ABOUT_PUBLIC
 import signal_content as content
 import signal_market as market
+try:                                                           # analyse multi-timeframes EN OBSERVATION (rien n'est publie) : optionnelle
+    import signal_mtf
+except Exception:                                              # noqa: BLE001 - le robot principal ne depend jamais de ce module
+    signal_mtf = None
 from chart_render import render_signal_chart, render_recap_card, GREEN, RED, GOLD, BLUE, WHITE, TF_LABEL
 
 if hasattr(sys.stdout, "buffer"):
@@ -162,7 +166,7 @@ def scoped_history(pubs: tuple) -> List[dict]:
 
 
 def tf_key_of(sig: Signal) -> str:
-    return {60: "1h", 240: "4h"}[int(sig.tf.rstrip("m"))]
+    return {15: "15m", 30: "30m", 60: "1h", 240: "4h"}[int(sig.tf.rstrip("m"))]
 
 
 def make_pubs(cfg: dict, st: Optional[dict] = None) -> tuple:
@@ -463,8 +467,13 @@ def status_text(st: dict, now: pd.Timestamp) -> str:
         if sg:
             lines.append(f"  • {sg.get('display', '?')} — {'achat' if sg.get('direction') == 'LONG' else 'vente'}")
     hist = load_history()
-    lines += ["", "Depuis le lancement : " + _stats_line(hist) if hist else "", "",
-              "Écris /etat à tout moment pour un nouveau point."]
+    lines += ["", "Depuis le lancement : " + _stats_line(hist) if hist else ""]
+    try:                                                      # positions virtuelles (observation) : message PRIVE, jamais publie
+        if signal_mtf is not None:
+            lines += signal_mtf.status_lines(st)
+    except Exception:
+        pass
+    lines += ["", "Écris /etat à tout moment pour un nouveau point."]
     return "\n".join(l for l in lines if l != "")
 
 
@@ -680,8 +689,26 @@ def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         save_state(st)
 
 
+def _observation(st: dict, cfg: dict, pubs: tuple, ids: List[str], now: pd.Timestamp, t_cycle: float) -> None:
+    """Analyse multi-timeframes EN OBSERVATION : positions virtuelles M15 / M30 / H1 dans les zones H4. Ne publie RIEN dans un groupe ;
+    ne peut JAMAIS gener le robot principal (toute erreur est ignoree, budget de temps limite)."""
+    if signal_mtf is None:
+        return
+    try:
+        signal_mtf.observe(st, cfg, now, ids, t_cycle=t_cycle, log=log, logp=logp)
+        day = str(now.date())
+        if now.weekday() < 5 and now.hour * 60 + now.minute >= 21 * 60 + 30 and st["sched"].get("mtf_digest") != day:
+            st["sched"]["mtf_digest"] = day                    # un seul bilan prive par jour, apres 21h30 UTC
+            text = signal_mtf.digest_text(st, now)
+            if text:
+                pubs[0].notify_owner(text, silent=True)
+    except Exception as e:
+        log(f"[MTF] erreur ignoree : {type(e).__name__}: {e}")
+
+
 def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
     now = utc_now()
+    t_cycle = time.time()
     _stats["ok"] = _stats["fail"] = 0
     st["n_symbols"] = len(ids)
     try:
@@ -713,6 +740,7 @@ def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         scheduled(st, pubs, cfg, now)
     except Exception as e:
         log(f"[SCHED] erreur : {e}\n{traceback.format_exc()[-400:]}")
+    _observation(st, cfg, pubs, ids, now, t_cycle)            # en dernier : le robot principal passe toujours avant
     # alerte si la source de prix est indisponible depuis longtemps (au proprietaire uniquement)
     if _stats["ok"] == 0 and _stats["fail"] > 0:
         st["data_fail_runs"] = st.get("data_fail_runs", 0) + 1

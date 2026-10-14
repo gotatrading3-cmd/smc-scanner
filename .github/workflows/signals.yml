@@ -54,6 +54,7 @@ jobs:
       SIGNALS_SYMBOLS: ${{ vars.SIGNALS_SYMBOLS }}
       SIGNALS_PAUSED: ${{ vars.SIGNALS_PAUSED }}
       SIGNALS_FUTURES: ${{ vars.SIGNALS_FUTURES }}
+      SIGNALS_OBSERVE: ${{ vars.SIGNALS_OBSERVE }}
     steps:
       - name: Garde (la chaine continue est-elle active ?)
         id: garde
