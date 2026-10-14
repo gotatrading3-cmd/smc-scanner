@@ -329,6 +329,11 @@ def _explainer() -> str:
             "un chiffre plus faible le pénalise — en général seulement : il arrive que le marché fasse l'inverse.")
 
 
+def _short_stats() -> str:
+    """Version courte pour le groupe public (petits messages)."""
+    return f"Sur l'euro/dollar, l'heure de la publication bouge en moyenne {str(STATS['EURUSD'][1]).replace('.', ',')} fois plus qu'une heure normale."
+
+
 def _stats_line() -> str:
     a, r = STATS["EURUSD"]
     g, rg = STATS["XAUUSD"]
@@ -390,14 +395,17 @@ def build(kind: str, st: dict, w: dict, consensus: Optional[dict] = None, actual
             f"ça part dans tous les sens ; je préfère attendre que ça se stabilise. Les trades déjà ouverts restent suivis normalement.")
     cons = _consensus_line(consensus)
     if kind == "pre":
-        base = f"{_explainer()}\n\n{_stats_line()}\n\n{plan}"
-        pub = pick(st, "nfp_pre", [
-            f"🗓️ {fr_date(t).capitalize()}, c'est NFP : les chiffres de l'emploi américain, à {heure}.\n\nC'est LE rendez-vous du mois pour le dollar. {base}\n\nJe vous donne le chiffre dès qu'il tombe, puis ma lecture 👀",
-            f"📅 Rendez-vous important {fr_date(t)} : le NFP (emploi américain) tombe à {heure}.\n\n{base}\n\nJe reste devant mes écrans et je vous dis tout ici.",
+        # petit message pour le public ; le VIP recoit la version complete (mesures detaillees, zones H4, conseil pour les trades ouverts)
+        tmpl = pick(st, "nfp_pre", [
+            f"🗓️ {fr_date(t).capitalize()}, c'est NFP : les chiffres de l'emploi américain, à {heure}.\n\n{{body}}\n\nJe vous donne le chiffre dès qu'il tombe, puis ma lecture 👀",
+            f"📅 Rendez-vous important {fr_date(t)} : le NFP (emploi américain) tombe à {heure}.\n\n{{body}}\n\nJe reste devant mes écrans et je vous dis tout ici.",
         ])
-        vip = pub + ("\n\n" + cons if cons else "") + ("\n\nZones H4 proches du prix en ce moment :\n" + _watch_lines(zones) if zones else "") + \
+        short = f"{_explainer()} {_short_stats()}\n\n{plan}"
+        full = f"{_explainer()}\n\n{_stats_line()}\n\n{plan}"
+        pub = tmpl.replace("{body}", short) + ("\n\n" + cons if cons else "")
+        vip = tmpl.replace("{body}", full) + ("\n\n" + cons if cons else "") + ("\n\nZones H4 proches du prix en ce moment :\n" + _watch_lines(zones) if zones else "") + \
             "\n\nSi tu as un trade ouvert : pense à le sécuriser ou à réduire avant la publication."
-        return {"vip": vip, "public": pub + ("\n\n" + cons if cons else "")}
+        return {"vip": vip, "public": pub}
     if kind == "t60":
         pub = pick(st, "nfp_t60", [
             f"⏳ Dans environ une heure : NFP à {heure}. {cons}".rstrip() + f"\n\n{plan}",
@@ -497,6 +505,39 @@ def run_step(st: dict, cfg: dict, pubs: tuple, now: pd.Timestamp, log: Callable 
                 log(f"[NFP] message « {kind} » ({mode})")
     except Exception as e:
         log(f"[NFP] erreur ignoree : {type(e).__name__}: {e}")
+
+
+def recap_text(st: dict, now: pd.Timestamp, get_actual: Optional[Callable] = None, get_reaction: Optional[Callable] = None) -> Optional[str]:
+    """Petit message PUBLIC « retour sur le dernier NFP + prochain rendez-vous » (chiffres reels du BLS, reaction mesuree). None si les chiffres
+    ne sont pas disponibles : on ne publie jamais un chiffre invente. Voix du trader, heures en GMT."""
+    from signal_content import pick
+    past = [d for d in sorted(NFP_RELEASES) if release_utc(d) < now - pd.Timedelta(hours=3)]
+    nxt = next_release(now)
+    if not past or not nxt:
+        return None
+    d = past[-1]
+    t, ref = release_utc(d), NFP_RELEASES[d]
+    actual = (get_actual or fetch_actual)(ref)
+    if not actual or actual.get("change_k") is None:
+        return None
+    ligne = f"{fmt_k(actual['change_k'])} emplois créés"
+    if actual.get("previous_change_k") is not None:
+        ligne += f" (le mois d'avant revu à {fmt_k(actual['previous_change_k'])})"
+    bits = [ligne]
+    if actual.get("unemployment") is not None:
+        bits.append(f"chômage à {fmt_pct(actual['unemployment'])}" + (f" contre {fmt_pct(actual['unemployment_prev'])} avant" if actual.get("unemployment_prev") is not None else ""))
+    if actual.get("earnings_mom") is not None:
+        bits.append(f"salaires horaires {fmt_pct2(actual['earnings_mom'])} sur un mois")
+    react = (get_reaction or reaction)(t, 30, count=9000) if (now - t) < pd.Timedelta(days=25) else {}
+    r = _reaction_line(react)
+    pause_a, pause_b = hhmm(nxt["release"] - pd.Timedelta(minutes=BLACKOUT[0])), hhmm(nxt["release"] + pd.Timedelta(minutes=BLACKOUT[1]))
+    return pick(st, "nfp_recap", [
+        f"🔙 Retour sur le dernier NFP ({fr_date(t)}) : " + ", ".join(bits) + "." + (f"\n\n{r}" if r else "") +
+        f"\n\nProchain rendez-vous : {fr_date(nxt['release'])} à {hhmm(nxt['release'])} GMT. Je ne prends aucun nouveau trade de {pause_a} à {pause_b} GMT, "
+        f"et je vous tiens au courant ici avant, pendant et après 👀",
+        f"📊 Petit rappel sur le NFP : le dernier ({fr_date(t)}) donnait " + ", ".join(bits) + "." + (f"\n\n{r}" if r else "") +
+        f"\n\nLe prochain tombe {fr_date(nxt['release'])} à {hhmm(nxt['release'])} GMT : pause de mes nouveaux trades de {pause_a} à {pause_b} GMT, et je vous dis tout ici.",
+    ])
 
 
 def status_line(now: pd.Timestamp) -> str:

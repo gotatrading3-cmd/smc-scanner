@@ -152,6 +152,9 @@ pre = ev.build("pre", st, w, cons, zones=zones)
 check("veille : date, heure GMT, explication du NFP, mesure sur 43 publications, plan de pause 13h00 -> 14h00",
       "Vendredi 6 novembre" in pre["public"] and "13h30 GMT" in pre["public"] and "nombre d'emplois créés" in pre["public"] and "2,8 fois" in pre["public"]
       and "de 13h00 à 14h00 GMT" in pre["public"], pre["public"])
+check("le message public est PETIT ; le VIP recoit la version complete (mesures detaillees : 'une fois sur deux', 'un cas sur quatre')",
+      len(pre["public"]) < len(pre["vip"]) - 400 and "une fois sur deux" in pre["vip"] and "un cas sur quatre" in pre["vip"]
+      and "une fois sur deux" not in pre["public"] and len(pre["public"]) < 1100, (len(pre["public"]), len(pre["vip"])))
 check("la prevision est dans les deux versions ; les zones H4 seulement dans le VIP",
       "prévision +70 000" in pre["public"] and "prévision +70 000" in pre["vip"] and "EURUSD — achat : Fair Value Gap H4" in pre["vip"] and "EURUSD" not in pre["public"] and "Order Block" not in pre["public"])
 check("le VIP recoit le conseil pour les trades ouverts, pas le public", "trade ouvert" in pre["vip"] and "trade ouvert" not in pre["public"])
@@ -176,6 +179,27 @@ check("jamais de promesse de gain", not any(x in t.lower() for t in allt for x i
 check("balises HTML equilibrees", all(t.count("<b>") == t.count("</b>") for t in allt))
 check("formats : 29 -> '+29 000', -12 -> '−12 000', pourcentages avec virgule", ev.fmt_k(29) == "+29 000" and ev.fmt_k(-12) == "−12 000" and ev.fmt_pct(4.2) == "4,2 %" and ev.fmt_pct2(0.13) == "+0,13 %")
 check("rotation des variantes : deux veilles de suite ne sont pas identiques", ev.build("pre", st, w, cons)["public"] != ev.build("pre", st, w, cons)["public"])
+
+print("F2) petit message public « retour sur le dernier NFP + prochain rendez-vous »")
+nowr = pd.Timestamp("2026-10-14 09:00")
+act_r = {"change_k": 29.0, "previous_change_k": 133.0, "unemployment": 4.2, "unemployment_prev": 4.1, "earnings_mom": 0.13}
+rt = ev.recap_text({"copy_idx": {}}, nowr, get_actual=lambda ref: act_r if ref == "2026-09" else None,
+                   get_reaction=lambda release, h, **k: {"EURUSD": (34.0, 30), "GBPUSD": (31.0, 30), "USDJPY": (-35.0, 30)})
+check("retour sur le NFP du 2 octobre : emplois, mois precedent revu, chomage, salaires, reaction, dollar en baisse",
+      "vendredi 2 octobre" in rt and "+29 000 emplois créés" in rt and "revu à +133 000" in rt and "chômage à 4,2 % contre 4,1 % avant" in rt and "+0,13 %" in rt
+      and "l'euro/dollar +34 pips" in rt and "Le dollar est en baisse" in rt, rt)
+check("... et le prochain rendez-vous : 6 novembre 13h30 GMT, pause de 13h00 a 14h00, sans promesse ni 'UTC'",
+      "vendredi 6 novembre à 13h30 GMT" in rt and "de 13h00 à 14h00 GMT" in rt and "UTC" not in rt and "garanti" not in rt.lower())
+check("chiffres du BLS indisponibles : AUCUN message (jamais de chiffre invente)", ev.recap_text({"copy_idx": {}}, nowr, get_actual=lambda ref: None) is None)
+check("apres la derniere date connue : rien", ev.recap_text({"copy_idx": {}}, pd.Timestamp("2028-01-01"), get_actual=lambda ref: act_r) is None)
+
+
+def pas_de_reaction(*a, **k):
+    raise AssertionError("la reaction ne doit pas etre demandee pour une publication de plus de 25 jours (donnees de 5 minutes indisponibles)")
+
+
+old_rt = ev.recap_text({"copy_idx": {}}, pd.Timestamp("2026-11-02 09:00"), get_actual=lambda ref: act_r, get_reaction=pas_de_reaction)
+check("publication ancienne (plus de 25 jours) : le message part sans ligne de reaction", old_rt and "Réaction" not in old_rt and "+29 000" in old_rt, old_rt)
 
 print("G) envoi : apercu prive ou groupes, chaque groupe marque a part, jamais de doublon")
 
@@ -318,5 +342,37 @@ check("mode off : aucune pause, le robot scanne comme avant", scans == ["EURUSD"
 ev.CONTROL_FILE.unlink()
 txt = runner.status_text({"active": {}, "per_day": {}, "sched": {}, "started": "2026-01-01"}, pd.Timestamp("2026-10-14 01:00"))
 check("/etat : prochain NFP et mode apercu", "Prochain NFP : vendredi 6 novembre à 13h30 GMT" in txt and "aperçu dans ton chat privé" in txt, txt)
+
+# --- poster le petit message a la demande : action « post » du workflow (kind = nfp)
+class PubNfp:
+    live, handle = True, ""
+
+    def __init__(self):
+        self.posts = []
+
+    def post_public(self, text, **k):
+        self.posts.append(text)
+        return 5
+
+
+pn = PubNfp()
+stn = {"sched": {}, "pub_posts": {}, "per_day": {}, "active": {}, "last_bar": {}, "copy_idx": {}, "watch": {}}
+runner.load_cfg = lambda: {"vip_perks": [], "brand": "X"}
+runner.connect = lambda log=None: True
+runner.shutdown = lambda: None
+runner.load_state = lambda: stn
+runner.make_pubs = lambda cfg, st: (None, pn)
+runner.utc_now = lambda: pd.Timestamp("2026-10-14 09:00")
+ev.fetch_actual = lambda ref: {"change_k": 29.0, "unemployment": 4.2}
+ev.reaction = lambda release, horizon_min=15, **k: {}
+runner.post_now("nfp")
+check("post_now('nfp') : un petit message dans le groupe PUBLIC, marque comme fait pour la journee",
+      len(pn.posts) == 1 and "Retour sur le dernier NFP" in pn.posts[0] or len(pn.posts) == 1 and "Petit rappel sur le NFP" in pn.posts[0], pn.posts)
+check("... compte dans le plafond de posts publics du jour", stn["pub_posts"] == {"2026-10-14": 1} and stn["sched"]["nfp_recap"] == "2026-10-14")
+ev.fetch_actual = lambda ref: None
+pn2 = PubNfp()
+runner.make_pubs = lambda cfg, st: (None, pn2)
+runner.post_now("nfp")
+check("chiffres indisponibles : rien n'est publie", pn2.posts == [])
 
 print(f"\n{ok} verifications reussies, aucune ne touche a Telegram, au reseau ni a MT5.")

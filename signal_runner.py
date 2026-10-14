@@ -644,7 +644,7 @@ def scheduled(st: dict, pubs: tuple, cfg: dict, now: pd.Timestamp) -> None:
 def post_now(kind: str) -> None:
     """Poste TOUT DE SUITE un contenu dans le groupe public (reel si PUBLIC_LIVE, sinon apercu dans ton chat) et le marque
     comme fait pour ce creneau : le calendrier ne le reposte pas. kind : edu, brief, ny, cta, promo, account, sat, sun,
-    movers, crypto, scan."""
+    movers, crypto, scan, nfp (retour sur le dernier NFP + prochain rendez-vous)."""
     cfg = load_cfg()
     if not connect(log=log):
         log("Source de donnees indisponible")
@@ -670,6 +670,7 @@ def post_now(kind: str) -> None:
             "movers": ("movers_am" if now.hour < 14 else "movers_pm", today, lambda: _movers_text(st), {}),
             "crypto": ("crypto", today, lambda: _crypto_text(st), {}),
             "ranking": ("ranking", today, lambda: content.ranking(st, _snapshot_cached(st, now)), {}),
+            "nfp": ("nfp_recap", today, lambda: signal_events.recap_text(st, now) if signal_events is not None else None, {}),
         }
         if lb:
             lo = max(lb)
