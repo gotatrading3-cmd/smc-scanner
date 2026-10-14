@@ -139,16 +139,29 @@ def due_kinds(st: dict, now: pd.Timestamp) -> List[str]:
     if not w:
         return []
     done = ((st.get("events") or {}).get("nfp") or {}).get(w["date"], {})
+    elite = _elite_on()                                   # le groupe VIP (nouveau) recoit aussi les messages : il doit les avoir tous eus
+
+    def fait(k: str) -> bool:
+        return bool(done.get(f"{k}_vip") and done.get(f"{k}_public") and (not elite or done.get(f"{k}_elite")))
+
     m, out = w["minutes"], []
-    if -BEFORE_H * 60 <= m < -T60[0] and not (done.get("pre_vip") and done.get("pre_public")):
+    if -BEFORE_H * 60 <= m < -T60[0] and not fait("pre"):
         out.append("pre")
-    if -T60[0] <= m < -T60[1] and not (done.get("t60_vip") and done.get("t60_public")):
+    if -T60[0] <= m < -T60[1] and not fait("t60"):
         out.append("t60")
-    if 0 <= m < RESULT_UNTIL and not (done.get("result_vip") and done.get("result_public")):
+    if 0 <= m < RESULT_UNTIL and not fait("result"):
         out.append("result")
-    if BLACKOUT[1] <= m < RESUME_UNTIL_H * 60 and not (done.get("resume_vip") and done.get("resume_public")):
+    if BLACKOUT[1] <= m < RESUME_UNTIL_H * 60 and not fait("resume"):
         out.append("resume")
     return out
+
+
+def _elite_on() -> bool:
+    try:
+        from signal_elite import settings
+        return settings()["mode"] != "off"
+    except Exception:
+        return False
 
 
 # ------------------------------------------------------------------ donnees (toutes facultatives)
@@ -483,6 +496,14 @@ def deliver(kind: str, texts: Dict[str, str], st: dict, w: dict, cfg: dict, pubs
             if mode == "live":
                 today = str(pd.Timestamp.utcnow().date())
                 st.setdefault("pub_posts", {})[today] = st.setdefault("pub_posts", {}).get(today, 0) + 1
+    if _elite_on() and not done.get(f"{kind}_elite"):                 # groupe VIP (nouveau) : la version complete, comme le groupe prive
+        try:
+            from signal_elite import publisher
+            ep = publisher(cfg, log)
+            if ep is not None and ep.send_text(texts["vip"], notify=False):
+                _mark(st, w["date"], f"{kind}_elite")
+        except Exception as e:
+            log(f"[NFP] groupe VIP : message non envoye ({type(e).__name__}: {e})")
 
 
 def run_step(st: dict, cfg: dict, pubs: tuple, now: pd.Timestamp, log: Callable = print) -> None:

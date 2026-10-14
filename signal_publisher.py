@@ -164,12 +164,14 @@ class Publisher:
     def __init__(self, cfg: Optional[dict] = None, log=print, audience: str = "vip"):
         self.cfg = cfg or load_cfg()
         self.log = log
-        self.audience = audience                        # "vip" | "public"
+        self.audience = audience                        # "vip" (= le « groupe prive » du proprietaire) | "public" | "elite" (= son « groupe VIP », positions 5/7 et plus)
         n = TelegramNotifier(silent=True)
         self.token = n.token
         self.owner_chat = n.chat_id
         if audience == "vip":
             flag, dest = self.cfg.get("live"), str(self.cfg.get("vip_chat_id", "")).strip()
+        elif audience == "elite":
+            flag, dest = self.cfg.get("elite_live"), str(self.cfg.get("elite_chat_id", "")).strip()
         else:
             flag, dest = self.cfg.get("public_live"), str(self.cfg.get("channel_id", "")).strip()
         self.dest = dest
@@ -190,7 +192,7 @@ class Publisher:
     def _tag(self) -> str:
         if self.live:
             return ""
-        who = "groupe VIP" if self.audience == "vip" else "groupe public"
+        who = {"vip": "groupe privé", "elite": "groupe VIP 📊"}.get(self.audience, "groupe public")      # (vocabulaire du proprietaire)
         return f"🧪 <b>APERÇU · {who}</b> · visible uniquement par toi\n\n"
 
     def _markup(self, with_button: bool, account: bool = False) -> Optional[str]:
@@ -345,7 +347,7 @@ class Publisher:
     # ------------------------------------------------------------ verification (ne poste rien)
     def check_target(self) -> dict:
         out = {"ok": False, "detail": ""}
-        who = "VIP" if self.audience == "vip" else "public"
+        who = {"vip": "groupe privé", "elite": "groupe VIP"}.get(self.audience, "public")
         if not self.token:
             out["detail"] = "token Telegram absent"
             return out

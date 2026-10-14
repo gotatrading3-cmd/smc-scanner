@@ -46,6 +46,10 @@ try:                                                           # NFP : messages 
     import signal_events
 except Exception:                                              # noqa: BLE001
     signal_events = None
+try:                                                           # « groupe VIP » (nouveau) : positions 5/7 et plus + animation reelle
+    import signal_elite
+except Exception:                                              # noqa: BLE001
+    signal_elite = None
 from chart_render import render_signal_chart, render_recap_card, GREEN, RED, GOLD, BLUE, WHITE, TF_LABEL
 
 if hasattr(sys.stdout, "buffer"):
@@ -336,6 +340,7 @@ def publish_signal(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pubs: t
     st["active"][sig.id] = {"signal": sig.to_dict(), "sim": TradeSim(sig).to_dict(), "msg_id": mid,
                             "public_msg_id": public_id, "digits": meta["digits"], "published": now.isoformat(),
                             "mode": "live" if pub_vip.live else "preview"}
+    st["active"][sig.id]["elite_msg_id"] = _elite_post_signal(sig, str(img), meta, cfg)       # position 5/7 et plus : aussi dans le groupe VIP (nouveau)
     st["per_day"][day] = st["per_day"].get(day, 0) + 1
     st["last_signal"][sig.symbol] = now.isoformat()
     logp(f"[SIGNAL] VIP {'LIVE' if pub_vip.live else 'APERCU'} / PUBLIC "
@@ -375,6 +380,8 @@ def update_active(st: dict, pubs: tuple, cfg: dict, key: str = "active") -> None
             if not orphan:
                 img = _result_image(sig, ev, sim, rec["digits"], cfg) if ev["type"] in _IMG_EVENTS else None
                 pub_vip.post_update(sig, ev, ev.get("r_at", sim.r), rec["msg_id"], img)   # VIP : suivi detaille
+                if rec.get("elite_msg_id"):                                               # groupe VIP (nouveau) : meme suivi, en reponse a SA fiche
+                    _elite_update(sig, ev, ev.get("r_at", sim.r), rec["elite_msg_id"], img, cfg)
                 if rec.get("public_msg_id") and cfg.get("public_progress", True):         # PUBLIC : seulement les signaux montres
                     _public_progress(sig, ev, sim, rec["public_msg_id"], rec["digits"], st, pub_pub, cfg)
             logp("[SUIVI] evenement" + (" (apercu, non publie)" if orphan else ""), f"{sig.display} {ev['type']} (R cumule {sim.r:+.2f})")
@@ -383,7 +390,8 @@ def update_active(st: dict, pubs: tuple, cfg: dict, key: str = "active") -> None
                             "score": sig.score, "signal_time": sig.signal_time, "entry": sig.entry, "sl": sig.sl,
                             "tps": sig.tps, "outcome": sim.outcome, "r": round(sim.r, 3),
                             "close_time": sim.close_time, "mode": rec.get("mode", "preview"),
-                            "public": bool(rec.get("public_msg_id")), "tf": sig.tf, "profile": sig.profile})
+                            "public": bool(rec.get("public_msg_id")), "tf": sig.tf, "profile": sig.profile,
+                            "elite": bool(rec.get("elite_msg_id"))})
             del st[key][sid]
             logp("[CLOTURE] trade clos", f"{sig.display} {sim.outcome} {sim.r:+.2f}R")
 
@@ -481,6 +489,13 @@ def status_text(st: dict, now: pd.Timestamp) -> str:
         if signal_mtf is not None:
             lines += signal_mtf.lane_lines(st, all_hist, now)
             lines += signal_mtf.status_lines(st)
+    except Exception:
+        pass
+    try:                                                      # groupe VIP (nouveau) : mode et chiffres reels des positions 5/7 et plus
+        if signal_elite is not None:
+            el = signal_elite.status_line(all_hist)
+            if el:
+                lines += ["", el]
     except Exception:
         pass
     try:                                                      # prochain NFP (et le mode des messages : apercu prive ou groupes)
@@ -707,6 +722,28 @@ def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         save_state(st)
 
 
+def _elite_post_signal(sig: Signal, img_path: str, meta: dict, cfg: dict) -> Optional[int]:
+    """Position tres confirmee (score >= 5) : la MEME fiche et la meme analyse dans le groupe VIP (nouveau). None si ce groupe est eteint,
+    si le score est insuffisant ou en cas d'erreur (jamais d'exception : le groupe prive et le public ne sont pas touches)."""
+    try:
+        if signal_elite is None or not signal_elite.wants(sig.score):
+            return None
+        pub = signal_elite.publisher(cfg, log)
+        return pub.post_signal(sig, img_path, meta["digits"]) if pub else None
+    except Exception as e:
+        log(f"[VIP] fiche non publiee ({type(e).__name__}: {e})")
+        return None
+
+
+def _elite_update(sig: Signal, ev: dict, r: float, reply_to: int, img: Optional[str], cfg: dict) -> None:
+    try:
+        pub = signal_elite.publisher(cfg, log) if signal_elite is not None else None
+        if pub:
+            pub.post_update(sig, ev, r, reply_to, img)
+    except Exception as e:
+        log(f"[VIP] suivi non publie ({type(e).__name__}: {e})")
+
+
 def _nfp_vip_only(now: pd.Timestamp) -> bool:
     """Vrai jusqu'a 4 h apres la publication NFP : les signaux pris dans la foulee ne sont montres QUE dans le groupe VIP. Jamais d'exception."""
     try:
@@ -775,6 +812,7 @@ def publish_scalp(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pubs: tu
         st.setdefault("active_scalp", {})[sig.id] = {"signal": sig.to_dict(), "sim": TradeSim(sig).to_dict(), "msg_id": mid,
                                                       "public_msg_id": None, "digits": meta["digits"], "published": now.isoformat(),
                                                       "mode": "live" if pub.live else "preview"}
+        st["active_scalp"][sig.id]["elite_msg_id"] = _elite_post_signal(sig, str(img), meta, cfg)       # score >= 5 : aussi dans le groupe VIP (nouveau)
     else:
         Publisher({**cfg, "live": False}, log=log, audience="vip").post_signal(sig, str(img), meta["digits"])
         signal_mtf.register(sig, st, now)
@@ -883,6 +921,9 @@ def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         log(f"[SCHED] erreur : {e}\n{traceback.format_exc()[-400:]}")
     if signal_events is not None:                             # messages NFP (veille, rappel, chiffre reel, reprise) : ne leve jamais d'exception
         signal_events.run_step(st, cfg, pubs, now, log=log)
+    if signal_elite is not None and signal_elite.settings()["mode"] != "off":      # groupe VIP (nouveau) : bienvenue, zones, point marche, bilans ; ne leve jamais d'exception
+        n_open = sum(1 for k in ("active", "active_scalp") for rec in (st.get(k) or {}).values() if rec.get("elite_msg_id"))
+        signal_elite.run_step(st, cfg, now, load_history(), n_open=n_open, t_cycle=t_cycle, log=log)
     _observation(st, cfg, pubs, ids, now, t_cycle)            # en dernier : le robot principal passe toujours avant
     # alerte si la source de prix est indisponible depuis longtemps (au proprietaire uniquement)
     if _stats["ok"] == 0 and _stats["fail"] > 0:
