@@ -61,7 +61,7 @@ _ZONES: Dict[tuple, object] = {}          # zones H4 par (symbole, timeframe, de
 # ------------------------------------------------------------------ reglages
 def control() -> dict:
     try:
-        d = json.loads(CONTROL_FILE.read_text(encoding="utf-8"))
+        d = json.loads(CONTROL_FILE.read_text(encoding="utf-8-sig"))         # (tolere un fichier enregistre avec BOM par un editeur Windows)
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}

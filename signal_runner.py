@@ -42,6 +42,10 @@ try:                                                           # analyse multi-t
     import signal_mtf
 except Exception:                                              # noqa: BLE001 - le robot principal ne depend jamais de ce module
     signal_mtf = None
+try:                                                           # NFP : messages d'information et pause de securite autour de la publication
+    import signal_events
+except Exception:                                              # noqa: BLE001
+    signal_events = None
 from chart_render import render_signal_chart, render_recap_card, GREEN, RED, GOLD, BLUE, WHITE, TF_LABEL
 
 if hasattr(sys.stdout, "buffer"):
@@ -476,6 +480,13 @@ def status_text(st: dict, now: pd.Timestamp) -> str:
             lines += signal_mtf.status_lines(st)
     except Exception:
         pass
+    try:                                                      # prochain NFP (et le mode des messages : apercu prive ou groupes)
+        if signal_events is not None and signal_events.nfp_mode() != "off":
+            nl = signal_events.status_line(now)
+            if nl:
+                lines += ["", nl + (" Messages en aperçu dans ton chat privé." if signal_events.nfp_mode() == "preview" else "")]
+    except Exception:
+        pass
     lines += ["", "Écris /etat à tout moment pour un nouveau point."]
     return "\n".join(l for l in lines if l != "")
 
@@ -692,6 +703,14 @@ def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         save_state(st)
 
 
+def _nfp_blackout(now: pd.Timestamp) -> bool:
+    """Vrai de T-30 min a T+30 min autour de la publication NFP : aucun nouveau signal (H4, scalp ou observation). Jamais d'exception."""
+    try:
+        return signal_events is not None and signal_events.in_blackout(now)
+    except Exception:
+        return False
+
+
 # ------------------------------------------------------------------ voie scalp (M15 / M30 / H1 dans les zones H4) et observation
 def choose_scalp(cands: list, st: dict, now: pd.Timestamp) -> list:
     """Voie scalp : plafonds propres (par jour, simultanes), UN seul signal a la fois par symbole (signaux H4 compris), exposition par
@@ -786,7 +805,7 @@ def _scalp_notices(st: dict, pubs: tuple, now: pd.Timestamp, lane: dict) -> None
 def _observation(st: dict, cfg: dict, pubs: tuple, ids: List[str], now: pd.Timestamp, t_cycle: float) -> None:
     """Analyse multi-timeframes : positions virtuelles M15 / M30 / H1 dans les zones H4 (rien n'est publie) et, si elle est allumee,
     voie scalp (apercu prive ou groupe VIP). Ne peut JAMAIS gener le robot principal (toute erreur est ignoree, budget de temps limite)."""
-    if signal_mtf is None:
+    if signal_mtf is None or _nfp_blackout(now):              # pause NFP : aucune recherche de nouvelle entree (le suivi reprendra apres)
         return
     try:
         if signal_mtf.enabled_profiles() or signal_mtf.lane_profiles():
@@ -827,7 +846,10 @@ def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
     except Exception as e:
         log(f"[SUIVI] scalp : erreur {e} | {traceback.format_exc()[-300:]!r}")
     cands = []
-    for sid in ids:
+    pause_nfp = _nfp_blackout(now)
+    if pause_nfp:
+        log("[NFP] publication en cours : pause des nouveaux signaux (le suivi des trades ouverts continue)")
+    for sid in ([] if pause_nfp else ids):                    # pendant la pause on ne scanne pas : les bougies seront rattrapees apres (signaux encore valables)
         try:
             found = scan_symbol(sid, UNIVERSE[sid]["cls"], st, cfg, now)
         except Exception as e:
@@ -847,6 +869,8 @@ def _run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         scheduled(st, pubs, cfg, now)
     except Exception as e:
         log(f"[SCHED] erreur : {e}\n{traceback.format_exc()[-400:]}")
+    if signal_events is not None:                             # messages NFP (veille, rappel, chiffre reel, reprise) : ne leve jamais d'exception
+        signal_events.run_step(st, cfg, pubs, now, log=log)
     _observation(st, cfg, pubs, ids, now, t_cycle)            # en dernier : le robot principal passe toujours avant
     # alerte si la source de prix est indisponible depuis longtemps (au proprietaire uniquement)
     if _stats["ok"] == 0 and _stats["fail"] > 0:

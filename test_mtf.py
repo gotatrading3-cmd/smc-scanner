@@ -348,6 +348,8 @@ mtf.CONTROL_FILE.write_text('{"scalp_profiles": "off", "scalp_mode": "LIVE ?"}',
 check("off = eteinte ; un mode illisible retombe sur l'apercu", mtf.lane_profiles() == [] and mtf.lane_mode() == "preview")
 mtf.CONTROL_FILE.write_text("pas du json", encoding="utf-8")
 check("un control.json illisible ne casse rien (voie eteinte, apercu)", mtf.lane_profiles() == [] and mtf.lane_mode() == "preview")
+mtf.CONTROL_FILE.write_bytes(b'\xef\xbb\xbf{"scalp_profiles": ["scalp_m30"]}')
+check("un control.json enregistre avec BOM (editeur Windows) est lu correctement", mtf.lane_profiles() == ["scalp_m30"])
 mtf.CONTROL_FILE.unlink()
 os.environ["SIGNALS_SCALP_PROFILES"], os.environ["SIGNALS_SCALP_MODE"] = "scalp_m15,intra_h1", "live"
 check("sans fichier : variables d'environnement", mtf.lane_profiles() == ["scalp_m15", "intra_h1"] and mtf.lane_mode() == "live")

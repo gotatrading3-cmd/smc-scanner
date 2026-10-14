@@ -189,6 +189,11 @@ class HtfZones:
         j = int(k[-1])
         return {"tf": self.label, "kind": self.kind[j], "lo": float(self.lo[j]), "hi": float(self.hi[j])}
 
+    def active(self, d: int, t_ns: int) -> List[dict]:
+        """Toutes les zones actives et fraiches a l'instant t (ns), dans le sens d."""
+        k = np.flatnonzero((self.dir == d) & (self.t0 <= t_ns) & (t_ns < self.t1))
+        return [{"tf": self.label, "kind": self.kind[int(j)], "lo": float(self.lo[j]), "hi": float(self.hi[j])} for j in k]
+
 
 def htf_zones_of(df_htf: pd.DataFrame, tf_minutes: int, label: str = "H4", point: float = 0.0001, asset_class: str = "fx",
                  params: Optional[dict] = None) -> Optional[HtfZones]:
