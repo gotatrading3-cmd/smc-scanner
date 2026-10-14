@@ -318,7 +318,10 @@ def publish_signal(sig: Signal, df1: pd.DataFrame, meta: dict, st: dict, pubs: t
     now = utc_now()
     day = str(now.date())
     public_id = None
-    if st["pub_sig"].get(day, 0) < int(cfg.get("public_signals_per_day", 2)):
+    vip_seul = _nfp_vip_only(now)
+    if vip_seul:
+        logp("[NFP] signal reserve au VIP (pris dans la foulee du NFP)", f"{sig.display} {sig.direction}")
+    if st["pub_sig"].get(day, 0) < int(cfg.get("public_signals_per_day", 2)) and not vip_seul:
         try:
             pimg = OUT_DIR / f"{sig.id}_public.png"
             cta = pub_pub.cta_due()                            # l'invitation n'est sur l'image que 1 message sur 7
@@ -702,6 +705,14 @@ def run_cycle(st: dict, cfg: dict, pubs: tuple, ids: List[str]) -> None:
         _run_cycle(st, cfg, pubs, ids)
     finally:
         save_state(st)
+
+
+def _nfp_vip_only(now: pd.Timestamp) -> bool:
+    """Vrai jusqu'a 4 h apres la publication NFP : les signaux pris dans la foulee ne sont montres QUE dans le groupe VIP. Jamais d'exception."""
+    try:
+        return signal_events is not None and signal_events.vip_only(now)
+    except Exception:
+        return False
 
 
 def _nfp_blackout(now: pd.Timestamp) -> bool:

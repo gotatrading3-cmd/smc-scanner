@@ -55,6 +55,7 @@ T60 = (70, 30)                   # rappel : de T-70 min a T-30 min
 BLACKOUT = (30, 30)              # pause des nouveaux signaux : de T-30 min a T+30 min
 RESULT_UNTIL = 90                # le chiffre reel est attendu jusqu'a T+90 min
 RESUME_UNTIL_H = 3.0             # le message de reprise peut partir jusqu'a T+3 h
+VIP_ONLY_H = 4.0                 # signaux de trade pris dans la foulee du NFP (jusqu'a T+4 h) : groupe VIP uniquement
 # Mesure sur 43 publications (2023-2026), historique H1 : amplitude mediane de l'heure de la publication et rapport a une heure normale
 STATS = {"EURUSD": (57, 2.8), "GBPUSD": (63, 2.7), "USDJPY": (92, 2.8), "XAUUSD": (245, 2.5), "US100": (141, 2.3)}
 WATCH_SYMBOLS = ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "XAUUSD", "US100")
@@ -118,6 +119,18 @@ def in_blackout(now: pd.Timestamp) -> bool:
         return False
     w = window(now)
     return bool(w) and -BLACKOUT[0] <= w["minutes"] < BLACKOUT[1]
+
+
+def vip_only(now: pd.Timestamp) -> bool:
+    """Vrai de la publication NFP jusqu'a T+4 h : les signaux de trade pris dans la foulee du NFP sont reserves au groupe VIP (demande du proprietaire,
+    2026-10-14) ; le groupe public continue de recevoir les messages d'information. Aucun signal n'est publie avant T+30 min (pause de securite)."""
+    if nfp_mode() == "off":
+        return False
+    for d in NFP_RELEASES:
+        t = release_utc(d)
+        if t <= now < t + pd.Timedelta(hours=VIP_ONLY_H):
+            return True
+    return False
 
 
 def due_kinds(st: dict, now: pd.Timestamp) -> List[str]:

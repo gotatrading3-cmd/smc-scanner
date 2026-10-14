@@ -375,4 +375,51 @@ runner.make_pubs = lambda cfg, st: (None, pn2)
 runner.post_now("nfp")
 check("chiffres indisponibles : rien n'est publie", pn2.posts == [])
 
+# --- signaux pris dans la foulee du NFP : groupe VIP uniquement
+check("fenetre « VIP seulement » : de la publication a T+4 h", ev.vip_only(M(-1)) is False and ev.vip_only(M(0)) and ev.vip_only(M(239)) and ev.vip_only(M(240)) is False)
+from signal_engine import Signal  # noqa: E402
+
+
+def sig4h():
+    t = pd.Timestamp("2026-11-06 12:00")
+    return Signal(symbol="EURUSD", display="EURUSD", direction="LONG", tf="240m", bar_open=t.isoformat(), signal_time=(t + pd.Timedelta(hours=4)).isoformat(), entry=1.1,
+                  sl=1.099, tps=[1.101, 1.102, 1.103], risk=0.001, atr=0.001, spread=0.0, score=5, grade="A+", checks={}, zone_kind="OB", zone_lo=1.099, zone_hi=1.1,
+                  zone_born=t.isoformat(), rsi=50.0, id="EURUSD-202611061600-L")
+
+
+class PubSig:
+    live, handle = True, ""
+
+    def __init__(self):
+        self.posts = []
+
+    def post_signal(self, sig, img, digits):
+        self.posts.append(("signal", sig.id))
+        return 9
+
+    def cta_due(self):
+        return False
+
+    def post_public(self, text, img=None, notify=False, cta=None, **k):
+        self.posts.append(("public", text))
+        return 11
+
+
+runner.render_signal_chart = lambda *a, **k: None
+runner.OUT_DIR = TMP / "out"
+for quand, mode, attendu_public, nom in ((M(60), None, False, "1 h apres le NFP : signal reserve au VIP, RIEN dans le groupe public"),
+                                         (M(-600), None, True, "bien avant le NFP : le groupe public voit le signal comme d'habitude"),
+                                         (M(300), None, True, "plus de 4 h apres le NFP : comme d'habitude"),
+                                         (M(60), "off", True, "mode NFP desactive : comme d'habitude")):
+    if mode:
+        ev.CONTROL_FILE.write_text('{"nfp_mode": "%s"}' % mode, encoding="utf-8")
+    runner.utc_now = lambda quand=quand: quand
+    vp, pp = PubSig(), PubSig()
+    sn = {"pub_sig": {}, "active": {}, "per_day": {}, "last_signal": {}, "copy_idx": {}}
+    runner.publish_signal(sig4h(), None, {"digits": 5}, sn, (vp, pp), {"brand": "X", "public_signals_per_day": 2})
+    check(nom, vp.posts == [("signal", "EURUSD-202611061600-L")] and (len(pp.posts) == 1) == attendu_public
+          and (sn["active"]["EURUSD-202611061600-L"]["public_msg_id"] is not None) == attendu_public and bool(sn["pub_sig"]) == attendu_public, (vp.posts, pp.posts, sn["pub_sig"]))
+    if mode:
+        ev.CONTROL_FILE.unlink()
+
 print(f"\n{ok} verifications reussies, aucune ne touche a Telegram, au reseau ni a MT5.")
