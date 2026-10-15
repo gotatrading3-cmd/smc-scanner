@@ -676,7 +676,7 @@
      "outcome": null,
      "close_time": null,
      "be_armed": true,
-     "last_ts": "2026-10-15T21:10:00",
+     "last_ts": "2026-10-15T21:15:00",
      "start": "2026-10-15T18:00:00",
      "expiry_min": 720.0
     },
@@ -755,7 +755,7 @@
      "outcome": null,
      "close_time": null,
      "be_armed": true,
-     "last_ts": "2026-10-15T21:10:00",
+     "last_ts": "2026-10-15T21:15:00",
      "start": "2026-10-15T18:00:00",
      "expiry_min": 1440.0
     },
