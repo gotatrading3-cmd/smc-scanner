@@ -1,11 +1,11 @@
 {
-    "scalp_profiles":  [
-                           "scalp_m15",
-                           "scalp_m30",
-                           "intra_h1"
-                       ],
-    "scalp_mode":  "live",
-    "nfp_mode":  "live",
-    "elite_mode":  "live",
-    "elite_chat_id":  "-1004392623650"
+    "scalp_profiles": [
+        "scalp_m15",
+        "scalp_m30",
+        "intra_h1"
+    ],
+    "scalp_mode": "live",
+    "nfp_mode": "live",
+    "elite_mode": "off",
+    "elite_chat_id": "-1004392623650"
 }
