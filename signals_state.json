@@ -675,91 +675,12 @@
      "outcome": null,
      "close_time": null,
      "be_armed": true,
-     "last_ts": "2026-11-09T17:40:00",
+     "last_ts": "2026-11-09T17:45:00",
      "start": "2026-11-09T12:00:00",
      "expiry_min": 2880.0
     },
     "profile": "intra_h1",
     "opened": "2026-11-09T12:02:16.911514"
-   },
-   "EURNZD-202611091500-L-scalp_m15": {
-    "signal": {
-     "symbol": "EURNZD",
-     "display": "EURNZD",
-     "direction": "LONG",
-     "tf": "15m",
-     "bar_open": "2026-11-09T14:45:00",
-     "signal_time": "2026-11-09T15:00:00",
-     "entry": 1.9961199760437012,
-     "sl": 1.9925939677498963,
-     "tps": [
-      1.999645984337506,
-      2.003171992631311,
-      2.006698000925116
-     ],
-     "risk": 0.0035260082938048942,
-     "atr": 0.0015302308687432905,
-     "spread": 0.0004,
-     "score": 4,
-     "grade": "A",
-     "checks": {
-      "htf_trend": true,
-      "zone_retest": true,
-      "confirmation": true,
-      "risk_ok": true,
-      "sweep": true,
-      "stack": false,
-      "volume": false,
-      "momentum": true,
-      "discount": true,
-      "session": true,
-      "killzone": false,
-      "htf_zone": true
-     },
-     "zone_kind": "OB",
-     "zone_lo": 1.992900013923645,
-     "zone_hi": 1.9942500591278076,
-     "zone_born": "2026-11-09T14:00:00",
-     "rsi": 56.53867992171227,
-     "poc": null,
-     "id": "EURNZD-202611091500-L-scalp_m15",
-     "profile": "scalp_m15",
-     "ctx": {
-      "tf": "H4",
-      "kind": "OB",
-      "lo": 1.9896700382232666,
-      "hi": 1.9979499578475952
-     }
-    },
-    "sim": {
-     "long": true,
-     "entry": 1.9961199760437012,
-     "spread": 0.0004,
-     "risk": 0.0035260082938048942,
-     "tps": [
-      1.999645984337506,
-      2.003171992631311,
-      2.006698000925116
-     ],
-     "entry_eff": 1.9965199760437011,
-     "sl_cur": 1.9925939677498963,
-     "remaining": 1.0,
-     "hit": [
-      false,
-      false,
-      false
-     ],
-     "r": 0.0,
-     "closed": false,
-     "outcome": null,
-     "close_time": null,
-     "be_armed": false,
-     "last_ts": "2026-11-09T17:40:00",
-     "start": "2026-11-09T15:00:00",
-     "expiry_min": 720.0
-    },
-    "profile": "scalp_m15",
-    "opened": "2026-11-09T15:02:16.751696"
    }
   },
   "per_day": {
