@@ -717,7 +717,7 @@
      "outcome": null,
      "close_time": null,
      "be_armed": true,
-     "last_ts": "2026-11-10T03:45:00",
+     "last_ts": "2026-11-10T03:50:00",
      "start": "2026-11-09T12:00:00",
      "expiry_min": 2880.0
     },
